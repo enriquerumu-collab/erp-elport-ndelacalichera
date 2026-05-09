@@ -160,7 +160,7 @@
     <script>
         const URL_GS = "https://script.google.com/macros/s/AKfycbx3x3aEAQ50e7HfN8qDTd3bwiwKVQz7RkDNrmH7OMCa1RSHJ2Pf9hMfjX-6ukicT9lAgQ/exec";
         const MIN_SACOS = 6;
-        const KG_POR_SACO_CORIMICYN = 40; // Cada saco de Corimicyn = 40 kg
+        const KG_POR_SACO_CORIMICYN = 40;
         
         function limpiarDatos() {
             let abonosRaw = localStorage.getItem('erp_abonos');
@@ -198,6 +198,24 @@
         function diaF(f) { if(!f) return 1; return Math.floor((new Date()-new Date(f+'T00:00:00'))/86400000)+1; }
         function cDiario(esp,sem){let c=DB.curva.find(x=>x.semana==sem);if(!c)return 0;if(esp==="Patos")return((c.patoMacho||0)+(c.patoHembra||0))/2/7;if(esp.includes("Macho"))return(c.patoMacho||0)/7;if(esp.includes("Hembra"))return(c.patoHembra||0)/7;if(esp==="Cerdos")return(c.cerdo||0)/7;return 0;}
         function cSemanal(esp,sem){let c=DB.curva.find(x=>x.semana==sem);if(!c)return 0;if(esp==="Patos")return((c.patoMacho||0)+(c.patoHembra||0))/2;if(esp.includes("Macho"))return c.patoMacho||0;if(esp.includes("Hembra"))return c.patoHembra||0;if(esp==="Cerdos")return c.cerdo||0;return 0;}
+        
+        // Calcular consumo acumulado de Corimicyn desde la fecha de llegada
+        function consumoCorimicynAcumulado() {
+            let total = 0;
+            DB.lotes.forEach(l => {
+                if(l.especie.includes("Pato")) {
+                    let diasDesdeLlegada = diaF(l.fechaLlegada);
+                    let semanasTranscurridas = semF(l.fechaLlegada);
+                    // Solo cuenta días de semana 1
+                    if(semanasTranscurridas >= 1) {
+                        let diasSemana1 = Math.min(7, diasDesdeLlegada);
+                        let consumoDiario = l.cantidad * cDiario(l.especie, 1);
+                        total += consumoDiario * diasSemana1;
+                    }
+                }
+            });
+            return total;
+        }
         
         function getFormula(esp,sem){
             if(esp.includes("Pato")){
@@ -273,9 +291,7 @@
                     let backup = JSON.parse(e.target.result);
                     mostrarModal('📥 Restaurar Backup', 
                         `<p>⚠️ Esto <b>reemplazará TODOS</b> tus datos.</p>
-                        <p>📅 Backup: <b>${backup.fecha || 'Desconocida'}</b></p>
-                        <p>🦆 Lotes: ${(backup.lotes||[]).length}</p>
-                        <p>👥 Clientes: ${(backup.clientes||[]).length}</p>`,
+                        <p>📅 Backup: <b>${backup.fecha || 'Desconocida'}</b></p>`,
                         () => {
                             DB.lotes = backup.lotes || [];
                             DB.clientes = backup.clientes || [];
@@ -444,11 +460,12 @@
             let dt=0;DB.clientes.forEach(c=>{let tv=DB.ventasCredito.filter(v=>v.clienteId===c.id&&!v.anulado&&v.total>0).reduce((s,v)=>s+v.total,0),ta2=DB.abonos.filter(a=>a.clienteId===c.id&&a.monto>0).reduce((s,a)=>s+a.monto,0);dt+=Math.max(0,tv-ta2);});
             let carneKg=DB.carneStock.reduce((s,c)=>s+c.kg,0);
             
-            // Verificar si hay lotes en semana 1 (Corimicyn)
             let haySemana1 = false;
             DB.lotes.forEach(l => {
                 if(semF(l.fechaLlegada) === 1 && l.especie.includes("Pato")) haySemana1 = true;
             });
+            
+            let consumoAcumulado = consumoCorimicynAcumulado();
             
             let consumoTableHTML = '';
             if(Object.keys(ps).length > 0) {
@@ -460,12 +477,30 @@
                         let coriStock = 0;
                         let it = DB.stock.find(x => x.nombre === "Corimicyn");
                         if(it) coriStock = Math.abs(parseFloat(it.cantidad) || 0);
-                        if(coriStock <= 0) { stockStatus = '🔴 Sin Corimicyn'; stockColor = '#e53e3c'; }
-                        else if(coriStock < semanal) { stockStatus = '🟡 Comprar más'; stockColor = '#e67e22'; }
-                        else { stockStatus = '✅ Corimicyn OK'; stockColor = '#38a169'; }
-                        // Calcular sacos necesarios
-                        let sacosNecesarios = Math.ceil(Math.max(0, semanal - coriStock) / KG_POR_SACO_CORIMICYN);
-                        if(sacosNecesarios > 0) stockStatus += ` (${sacosNecesarios} saco(s))`;
+                        let stockReal = coriStock - consumoAcumulado;
+                        let faltante = semanal - coriStock;
+                        if(coriStock <= 0) {
+                            stockStatus = '🔴 Sin Corimicyn';
+                            stockColor = '#e53e3c';
+                            stockStatus += ` (necesitas ${semanal.toFixed(1)} kg = ${Math.ceil(semanal/KG_POR_SACO_CORIMICYN)} sacos)`;
+                        } else if(stockReal <= 0) {
+                            stockStatus = '🔴 Agotado (ya se consumió)';
+                            stockColor = '#e53e3c';
+                            stockStatus += ` (faltan ${Math.abs(stockReal).toFixed(1)} kg)`;
+                        } else if(faltante > 0) {
+                            stockStatus = '🟡 Faltan ' + faltante.toFixed(1) + ' kg';
+                            stockColor = '#e67e22';
+                            stockStatus += ` | Stock real: ~${stockReal.toFixed(1)} kg`;
+                            if(faltante > KG_POR_SACO_CORIMICYN) {
+                                stockStatus += ` (${Math.ceil(faltante/KG_POR_SACO_CORIMICYN)} sacos más)`;
+                            } else {
+                                stockStatus += ` (con 1 saco más cubres)`;
+                            }
+                        } else {
+                            stockStatus = '✅ Corimicyn OK';
+                            stockColor = '#38a169';
+                            stockStatus += ` (real: ~${stockReal.toFixed(1)} kg)`;
+                        }
                     } else if(RECETAS[f]) {
                         let faltantes = [];
                         for(let ing in RECETAS[f]) {
@@ -486,7 +521,6 @@
             let tProxPorLote={};DB.lotes.forEach(l=>{let d=diaF(l.fechaLlegada),tipo=l.especie.includes("Pato")?"Pato":"Cerdo";DB.protocolos.forEach(p=>{if(p.especie&&p.especie.includes(tipo))for(let i=1;i<=7;i++){let df=d+i;if(df>=p.diaInicio&&df<=p.diaFin){if(!tProxPorLote[l.id])tProxPorLote[l.id]=[];tProxPorLote[l.id].push({dia:i,tarea:p.tarea,diaInicio:p.diaInicio,diaFin:p.diaFin,df:df});}}});});let tProxHTML='';for(let loteId in tProxPorLote){let tareas=tProxPorLote[loteId];tareas.sort((a,b)=>a.dia-b.dia);let resumen=[],actual=null;tareas.forEach(t=>{if(actual&&actual.tarea===t.tarea&&actual.dfFin+1===t.df){actual.dfFin=t.df;actual.dias.push(t.dia);}else{if(actual)resumen.push(actual);actual={tarea:t.tarea,diaInicio:t.diaInicio,diaFin:t.diaFin,df:t.df,dfFin:t.df,dias:[t.dia]};}});if(actual)resumen.push(actual);let ico=loteId.toLowerCase().includes('pato')?'🦆':'🐷';tProxHTML+=`<div class="lote-grupo"><div class="lote-grupo-header" onclick="this.nextElementSibling.classList.toggle('open')"><span>${ico} <b>${loteId}</b> - ${tareas.length} tarea(s)</span><span>▼</span></div><div class="lote-grupo-body">${resumen.map(r=>{let diasStr=r.dias.length===1?`+${r.dias[0]}d`:`+${r.dias[0]}d a +${r.dias[r.dias.length-1]}d`;return`<div class="tarea-item tarea-prox" style="font-size:11px;"><div class="tarea-badge" style="background:#3498db;font-size:9px;">${diasStr}</div><div><b>${r.tarea}</b><br><small>Día ${r.df-r.diaInicio+1}-${r.dfFin-r.diaInicio+1} de ${r.diaFin-r.diaInicio+1}</small></div></div>`;}).join('')}</div></div>`;}if(!tProxHTML)tProxHTML='<p style="color:#718096;">Sin tareas próximos 7 días</p>';
             
             let alertasHTML='';
-            // Alerta de Corimicyn si hay patos en semana 1
             if(haySemana1) {
                 let coriStock = 0;
                 let it = DB.stock.find(x => x.nombre === "Corimicyn");
@@ -497,12 +531,22 @@
                         consumoCori += l.cantidad * cDiario(l.especie, 1) * 7;
                     }
                 });
+                let stockReal = coriStock - consumoAcumulado;
                 let faltante = consumoCori - coriStock;
-                let sacosFaltantes = Math.ceil(Math.max(0, faltante) / KG_POR_SACO_CORIMICYN);
                 if(coriStock <= 0) {
-                    alertasHTML += `<div class="alerta-item alerta-critica"><b>🔴 CORIMICYN AGOTADO</b> - Necesitas ${sacosFaltantes} saco(s) (${faltante.toFixed(1)} kg) para Semana 1</div>`;
+                    let sacos = Math.ceil(consumoCori / KG_POR_SACO_CORIMICYN);
+                    alertasHTML += `<div class="alerta-item alerta-critica"><b>🔴 CORIMICYN AGOTADO</b> - Necesitas ${sacos} saco(s) (${consumoCori.toFixed(1)} kg) para Semana 1</div>`;
+                } else if(stockReal <= 0) {
+                    alertasHTML += `<div class="alerta-item alerta-critica"><b>🔴 CORIMICYN CONSUMIDO</b> - Ya se usó todo. Compra ${Math.ceil((consumoCori)/KG_POR_SACO_CORIMICYN)} saco(s) más.</div>`;
                 } else if(faltante > 0) {
-                    alertasHTML += `<div class="alerta-item alerta-warning"><b>🟡 Corimicyn:</b> Faltan ${faltante.toFixed(1)} kg (${sacosFaltantes} saco(s) de 40 kg)</div>`;
+                    let msg = `<div class="alerta-item alerta-warning"><b>🟡 Corimicyn:</b> Faltan ${faltante.toFixed(1)} kg (Stock real: ~${stockReal.toFixed(1)} kg)`;
+                    if(faltante > KG_POR_SACO_CORIMICYN) {
+                        msg += ` | ${Math.ceil(faltante/KG_POR_SACO_CORIMICYN)} sacos más`;
+                    } else {
+                        msg += ` | Con 1 saco cubres`;
+                    }
+                    msg += `</div>`;
+                    alertasHTML += msg;
                 }
             }
             
@@ -693,10 +737,9 @@
         function nuevoCliente(){document.getElementById('modalContainer').innerHTML=`<div class="modal-overlay" id="mo"><div class="modal"><h3>➕ Nuevo</h3><input type="text" id="ncNom" placeholder="Nombre"><input type="text" id="ncTel" placeholder="Teléfono"><p id="ncAdv" style="color:#e67e22;font-size:12px;display:none;"></p><div class="modal-actions"><button class="btn btn-accent" onclick="cerrarModal()">Cancelar</button><button class="btn btn-primary" id="ncBtn">✅ Crear</button></div></div></div>`;document.getElementById('mo').onclick=function(e){if(e.target===this)cerrarModal();};document.getElementById('ncNom').oninput=function(){let n=this.value.trim();let adv=document.getElementById('ncAdv');if(n&&DB.clientes.find(c=>c.nombre.toLowerCase()===n.toLowerCase())){adv.style.display='block';adv.innerHTML=`⚠️ "<b>${n}</b>" ya existe.`;}else{adv.style.display='none';}};document.getElementById('ncBtn').onclick=function(){let n=document.getElementById('ncNom')?.value.trim();if(!n)return alert("❌ Nombre");let existe=DB.clientes.find(c=>c.nombre.toLowerCase()===n.toLowerCase());if(existe){cerrarModal();alert(`⚠️ "${existe.nombre}" ya existe.`);if(vistaActual==='clientes')seleccionarClienteAbono(existe.id,existe.nombre);return;}DB.clientes.push({id:'CLI_'+Date.now(),nombre:n,telefono:document.getElementById('ncTel')?.value||''});guardar('erp_clientes',DB.clientes);cerrarModal();initClientes();};}
         function eliminarCliente(id){let c=DB.clientes.find(x=>x.id===id);if(!c)return;mostrarModal('❌ Eliminar',`¿Eliminar <b>${c.nombre}</b>?`,()=>{DB.clientes=DB.clientes.filter(x=>x.id!==id);DB.ventasCredito=DB.ventasCredito.filter(v=>v.clienteId!==id);DB.abonos=DB.abonos.filter(a=>a.clienteId!==id);guardar('erp_clientes',DB.clientes);guardar('erp_ventas_credito',DB.ventasCredito);guardar('erp_abonos',DB.abonos);initClientes();});}
         
-        function vCompras(){return`<div class="topbar"><h2>🛒 Compras</h2></div><div class="grid-2"><div class="card"><div class="card-header">📊 Pedidos</div><div style="background:#f7fafc;padding:10px;border-radius:6px;"><h4>Ingredientes</h4><div id="pedidoIng"></div></div><div style="background:#1a202c;padding:10px;border-radius:6px;margin-top:8px;"><h4 style="color:#fbd38d;">🏭 Núcleos</h4><div id="pedidoNuc"></div></div></div><div class="card"><div class="card-header">🛍️ Compra Rápida</div><select id="compraInsumo">${INSUMOS.map(i=>`<option>${i}</option>`).join('')}</select><div class="form-row"><input type="number" id="compraKilos" placeholder="Kilos"><input type="number" id="compraCosto" placeholder="Costo"></div><button class="btn btn-accent btn-block" onclick="agregarCarrito()">➕ Añadir</button><table style="margin-top:8px;"><tr><th>Insumo</th><th>Kg</th><th>S/</th><th></th></tr><tbody id="cuerpoCarrito"></tbody></table><button id="btnProcesar" class="btn btn-primary btn-block" style="display:none;" onclick="envCarrito()">✅ Guardar</button></div></div>`;}
-        function initCompras(){actualizarPedidos();actualizarCarrito();}
+        function vCompras(){return`<div class="topbar"><h2>🛒 Compras</h2></div><div class="grid-2"><div class="card"><div class="card-header">📊 Pedidos</div><div style="background:#f7fafc;padding:10px;border-radius:6px;"><h4>Ingredientes</h4><div id="pedidoIng"></div></div><div style="background:#1a202c;padding:10px;border-radius:6px;margin-top:8px;"><h4 style="color:#fbd38d;">🏭 Núcleos</h4><div id="pedidoNuc"></div></div></div><div class="card"><div class="card-header">🛍️ Compra Rápida <small style="font-size:10px;color:#718096;">(fecha de hoy)</small></div><select id="compraInsumo">${INSUMOS.map(i=>`<option>${i}</option>`).join('')}</select><div class="form-row"><input type="number" id="compraKilos" placeholder="Kilos"><input type="number" id="compraCosto" placeholder="Costo S/"></div><label style="font-size:11px;">📅 Fecha de compra (si es distinta a hoy)</label><input type="date" id="compraFecha"><button class="btn btn-accent btn-block" onclick="agregarCarrito()">➕ Añadir al carrito</button><table style="margin-top:8px;"><tr><th>Insumo</th><th>Kg</th><th>S/</th><th></th></tr><tbody id="cuerpoCarrito"></tbody></table><button id="btnProcesar" class="btn btn-primary btn-block" style="display:none;" onclick="envCarrito()">✅ Guardar Compra</button></div></div>`;}
+        function initCompras(){actualizarPedidos();actualizarCarrito();let el=document.getElementById('compraFecha');if(el)el.valueAsDate=new Date();}
         function actualizarPedidos(){let ing=document.getElementById('pedidoIng'),nuc=document.getElementById('pedidoNuc');if(!ing||!nuc||!DB.lotes.length){ing.innerHTML='<p style="color:#718096;">Sin lotes.</p>';nuc.innerHTML='<p style="color:#a0aec0;">Sin requerimiento.</p>';return;}
-        // Verificar Corimicyn primero
         let haySem1=false, consumoCori=0;
         DB.lotes.forEach(l=>{let sa=semF(l.fechaLlegada);if(sa===1&&l.especie.includes('Pato')){haySem1=true;consumoCori+=l.cantidad*cSemanal(l.especie,1);}});
         if(haySem1){let coriSt=0,it=DB.stock.find(x=>x.nombre==='Corimicyn');if(it)coriSt=Math.abs(parseFloat(it.cantidad)||0);let falta=consumoCori-coriSt;let ingHTML='';if(falta>0){ingHTML=`<div style="color:#c53030;">🔴 <b>Corimicyn:</b> Faltan ${falta.toFixed(2)} kg (${Math.ceil(falta/KG_POR_SACO_CORIMICYN)} sacos de ${KG_POR_SACO_CORIMICYN} kg)</div>`;}else{ingHTML=`<div style="color:#38a169;">✅ Corimicyn: ${coriSt.toFixed(2)} kg (${Math.ceil(coriSt/KG_POR_SACO_CORIMICYN)} sacos)</div>`;}ing.innerHTML=ingHTML;}
@@ -704,9 +747,9 @@
         let nucleoPorFase={};DB.lotes.forEach(l=>{let sa=semF(l.fechaLlegada);for(let s=0;s<15;s++){let semana=sa+s,cs=cSemanal(l.especie,semana);if(cs>0){let f=getFormula(l.especie,semana),fi=getFaseInfo(l.especie,semana);if(RECETAS[f]&&RECETAS[f][fi.nucleo]){let kgN=(RECETAS[f][fi.nucleo]/500)*(l.cantidad*cs);if(!nucleoPorFase[fi.nucleo])nucleoPorFase[fi.nucleo]={kgNecesarios:0,primeraSemana:semana,ultimaSemana:semana,fase:fi.nombre};nucleoPorFase[fi.nucleo].kgNecesarios+=kgN;if(semana<nucleoPorFase[fi.nucleo].primeraSemana)nucleoPorFase[fi.nucleo].primeraSemana=semana;if(semana>nucleoPorFase[fi.nucleo].ultimaSemana)nucleoPorFase[fi.nucleo].ultimaSemana=semana;}}}});let nh='<table style="color:#e2e8f0;width:100%;">',ts=0;LISTA_NUCLEOS.forEach(n=>{let datos=nucleoPorFase[n];if(datos&&datos.kgNecesarios>0.01){let st=0,it=DB.stock.find(x=>x.nombre===n);if(it)st=Math.abs(parseFloat(it.cantidad)||0);let sf=Math.ceil(Math.max(0,datos.kgNecesarios-st)/(NUCLEOS_KG[n]||10));ts+=sf;let rango=datos.primeraSemana===datos.ultimaSemana?`Sem ${datos.primeraSemana}`:`Sem ${datos.primeraSemana}-${datos.ultimaSemana}`;nh+=`<tr><td><b>${n}</b> <small>(${rango})</small></td><td>${sf>0?`<span class="badge badge-orange">${sf} saco(s)</span>`:'<span style="color:#68d391;">✅ OK</span>'}</td></tr>`;}});if(ts===0)nh+='<tr><td colspan="2" style="color:#68d391;">✅ Sin necesidad</td></tr>';nh+=`<tr style="font-weight:bold;"><td>TOTAL</td><td>${ts} sacos</td></tr></table>`;if(ts>0&&ts<MIN_SACOS){nh+=`<div style="color:#fbd38d;">⚠️ Solo ${ts} sacos. Mín ${MIN_SACOS}.</div>`;}else if(ts>=MIN_SACOS){nh+=`<div style="color:#68d391;">✅ ¡${ts} sacos! 🚚</div>`;}nuc.innerHTML=nh;}
         function getFaseInfo(esp,sem){if(esp.includes("Pato")){if(sem<=3)return{nombre:"Pato Inicio",nucleo:"Núcleo Pato Inicio"};if(sem<=7)return{nombre:"Pato Crecimiento",nucleo:"Núcleo Pato Crecimiento"};return{nombre:"Pato Acabado",nucleo:"Núcleo Pato Acabado"};}else{if(sem<=4)return{nombre:"Cerdo Inicio",nucleo:"Núcleo Cerdo Inicio"};if(sem<=7)return{nombre:"Cerdo Crecimiento",nucleo:"Núcleo Cerdo Crecimiento"};if(sem<=10)return{nombre:"Cerdo Desarrollo",nucleo:"Núcleo Cerdo Desarrollo"};return{nombre:"Cerdo Acabado",nucleo:"Núcleo Cerdo Acabado"};}}
         let carrito=[];
-        function agregarCarrito(){let i=document.getElementById('compraInsumo')?.value,k=document.getElementById('compraKilos')?.value,c=document.getElementById('compraCosto')?.value;if(!k||!c)return alert("❌ Completa");carrito.push({insumo:i,kilos:k,costo:c});actualizarCarrito();}
+        function agregarCarrito(){let i=document.getElementById('compraInsumo')?.value,k=document.getElementById('compraKilos')?.value,c=document.getElementById('compraCosto')?.value,f=document.getElementById('compraFecha')?.value;if(!k||!c)return alert("❌ Completa Kilos y Costo");carrito.push({insumo:i,kilos:k,costo:c,fecha:f||new Date().toISOString().split('T')[0]});actualizarCarrito();document.getElementById('compraKilos').value='';document.getElementById('compraCosto').value='';}
         function actualizarCarrito(){let b=document.getElementById('cuerpoCarrito'),bp=document.getElementById('btnProcesar');if(!b)return;b.innerHTML=carrito.map((x,i)=>`<tr><td>${x.insumo}</td><td>${x.kilos}kg</td><td>S/${x.costo}</td><td><button class="btn btn-danger btn-xs" onclick="carrito.splice(${i},1);actualizarCarrito();">❌</button></td></tr>`).join('');if(bp)bp.style.display=carrito.length?'block':'none';}
-        function envCarrito(){if(!carrito.length)return;let detalle=carrito.map(x=>`• ${x.insumo}: ${x.kilos} kg - S/ ${x.costo}`).join('<br>');mostrarModal('🛒 Confirmar',`<b>Resumen:</b><br>${detalle}`,()=>{carrito.forEach(item=>{let e=DB.stock.find(s=>s.nombre===item.insumo);if(e)e.cantidad=(parseFloat(e.cantidad)||0)+parseFloat(item.kilos);else DB.stock.push({nombre:item.insumo,cantidad:parseFloat(item.kilos)});});guardar('erp_stock',DB.stock);let fh=new Date().toISOString().split('T')[0];carrito.forEach(item=>{DB.gastos.unshift({fecha:fh,concepto:"🛒 Compra: "+item.insumo+" ("+item.kilos+" kg)",monto:parseFloat(item.costo)});});guardar('erp_gastos',DB.gastos);peticion({accion:"comprar_multiple",lista:carrito},()=>{carrito=[];actualizarCarrito();actualizarPedidos();sincronizar(true);});});}
+        function envCarrito(){if(!carrito.length)return;let detalle=carrito.map(x=>`• ${x.insumo}: ${x.kilos} kg - S/ ${x.costo} (${x.fecha})`).join('<br>');mostrarModal('🛒 Confirmar Compra',`<b>Resumen:</b><br>${detalle}`,()=>{carrito.forEach(item=>{let e=DB.stock.find(s=>s.nombre===item.insumo);if(e)e.cantidad=(parseFloat(e.cantidad)||0)+parseFloat(item.kilos);else DB.stock.push({nombre:item.insumo,cantidad:parseFloat(item.kilos)});DB.gastos.unshift({fecha:item.fecha,concepto:"🛒 Compra: "+item.insumo+" ("+item.kilos+" kg)",monto:parseFloat(item.costo)});});if(DB.gastos.length>100)DB.gastos=DB.gastos.slice(0,100);guardar('erp_stock',DB.stock);guardar('erp_gastos',DB.gastos);peticion({accion:"comprar_multiple",lista:carrito},()=>{carrito=[];actualizarCarrito();actualizarPedidos();sincronizar(true);});});}
         
         function vPreparar(){return`<div class="topbar"><h2>🥣 Mezcladora</h2></div><div class="card"><select id="prepFormula" onchange="mostrarReceta()"><option value="">-- Fórmula --</option>${Object.keys(RECETAS).map(f=>`<option>${f}</option>`).join('')}</select><input type="number" id="prepKilos" placeholder="Kilos a preparar" oninput="mostrarReceta()"><div id="cajaReceta" style="display:none;background:#f0fff4;padding:10px;border-radius:6px;"><ul id="listaReceta"></ul></div><button class="btn btn-primary btn-block" onclick="regPreparar()">🥣 Preparar y Descontar</button><p style="font-size:11px;color:#718096;margin-top:6px;">⚠️ Al preparar, se descontarán los ingredientes del stock y se agregará el alimento preparado.</p></div>`;}
         function mostrarReceta(){let f=document.getElementById('prepFormula')?.value,k=document.getElementById('prepKilos')?.value,c=document.getElementById('cajaReceta'),l=document.getElementById('listaReceta');if(!f||!k||k<=0){c.style.display='none';return;}c.style.display='block';l.innerHTML=Object.entries(RECETAS[f]).map(([ing,v])=>`<li><b>${((v/500)*k).toFixed(2)} kg</b> - ${ing} <span style="color:#e53e3c;">(se descontará)</span></li>`).join('')+`<li style="margin-top:8px;border-top:1px solid #ccc;padding-top:8px;"><b style="color:#27ae60;">➕ ${k} kg de 🥣 ${f}</b> <span style="color:#27ae60;">(se agregará al stock)</span></li>`;}
