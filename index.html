@@ -152,7 +152,7 @@
             <a data-view="tickets" onclick="navegar('tickets',this)">🧾 <span>Tickets</span></a>
             <a data-view="stock" onclick="navegar('stock',this)">📦 <span>Stock</span></a>
         </nav>
-        <div class="sidebar-footer">ERP v4.2 🌽</div>
+        <div class="sidebar-footer">ERP v4.2 🌾</div>
     </aside>
     <main class="main" id="mainContent"><p style="text-align:center;padding:40px;">Cargando...</p></main>
     <div id="modalContainer"></div>
@@ -332,18 +332,19 @@
         let syncTimer = null;
         function agendarSync() { if(syncTimer) clearTimeout(syncTimer); syncTimer = setTimeout(() => sincronizar(true), 300000); }
         
-        // CORREGIDO:window.onload = () => {
-    document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long', day:'numeric', month:'long'});
-    
-    let fechaGuardada = localStorage.getItem('erp_ultima_fecha_consumo');
-    if (DB.lotes.length > 0 && (!fechaGuardada || fechaGuardada < '2026-05-09')) {
-        localStorage.removeItem('erp_ultima_fecha_consumo');
-        ultimaFechaConsumo = '';
-        console.log('🔄 Fecha de consumo reseteada');
-    }
-    
-    sincronizar();  // ← ¡ESTA LÍNEA ES CRUCIAL!
-};
+        // CORREGIDO: window.onload simplificado
+        window.onload = () => {
+            document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long',day:'numeric',month:'long'});
+            
+            let fechaGuardada = localStorage.getItem('erp_ultima_fecha_consumo');
+            if (DB.lotes.length > 0 && (!fechaGuardada || fechaGuardada < '2026-05-09')) {
+                localStorage.removeItem('erp_ultima_fecha_consumo');
+                ultimaFechaConsumo = '';
+                console.log('🔄 Fecha de consumo reseteada');
+            }
+            
+            sincronizar();
+        };
         
         function navegar(view, el) {
             vistaActual = view; localStorage.setItem('erp_vista', view);
