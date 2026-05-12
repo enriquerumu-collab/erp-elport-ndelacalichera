@@ -182,17 +182,20 @@
         
         function procesarConsumoDiario() {
             if (!DB.lotes.length) return;
+            
             let hoy = new Date();
-            let fechaHoy = new Date().toISOString().split('T')[0];
+            let fechaHoy = hoy.toISOString().split('T')[0];
             
             // Si ya se procesó hoy, no hacer nada
             if (ultimaFechaConsumo === fechaHoy) return;
             
-            // Si es la primera vez, usar la fecha de ayer como referencia
+            // Si es la primera vez, calcular desde la fecha de llegada del lote
             if (!ultimaFechaConsumo) {
-                let ayer = new Date(hoy);
-                ayer.setDate(ayer.getDate() - 1);
-                ultimaFechaConsumo = ayer.toISOString().split('T')[0];
+                // Buscar la fecha más antigua de los lotes
+                let fechaMasAntigua = DB.lotes.reduce((min, l) => {
+                    return l.fechaLlegada < min ? l.fechaLlegada : min;
+                }, DB.lotes[0].fechaLlegada);
+                ultimaFechaConsumo = fechaMasAntigua;
             }
             
             let fechaInicio = new Date(ultimaFechaConsumo + 'T00:00:00');
@@ -202,36 +205,51 @@
             if (diasTranscurridos <= 0) diasTranscurridos = 1;
             if (diasTranscurridos > 7) diasTranscurridos = 7;
             
+            console.log('Procesando consumo de', diasTranscurridos, 'días desde', ultimaFechaConsumo);
+            
             let consumos = [];
             DB.lotes.forEach(l => {
                 let s = semF(l.fechaLlegada);
                 let d = cDiario(l.especie, s);
                 let f = getFormula(l.especie, s);
                 let consumoTotal = l.cantidad * d * diasTranscurridos;
-                let nombreStock = f === 'Corimicyn' ? 'Corimicyn' : ('🥣 ' + f);
                 
-                // Buscar el item en stock (insensible a emoji)
-                let item = DB.stock.find(x => {
-                    let nombreLimpio = x.nombre.replace(/^🥣\s*/, '').trim();
-                    return nombreLimpio === f || x.nombre === nombreStock;
-                });
+                console.log('Lote:', l.id, 'Fórmula:', f, 'Diario:', d, 'Total:', consumoTotal);
+                
+                // Buscar en stock (Corimicyn sin emoji, otros con 🥣)
+                let nombreStock = f === 'Corimicyn' ? 'Corimicyn' : ('🥣 ' + f);
+                let item = DB.stock.find(x => x.nombre === nombreStock);
+                
+                if (!item) {
+                    // Buscar sin emoji como fallback
+                    item = DB.stock.find(x => x.nombre === f);
+                }
                 
                 if (item) {
-                    item.cantidad = (parseFloat(item.cantidad) || 0) - consumoTotal;
-                    consumos.push({ alimento: f, kilos: Math.abs(consumoTotal) });
+                    let stockAntes = parseFloat(item.cantidad) || 0;
+                    item.cantidad = stockAntes - consumoTotal;
+                    console.log('Stock', nombreStock, ':', stockAntes, '→', item.cantidad);
+                    consumos.push({ alimento: f, kilos: consumoTotal });
+                } else {
+                    console.log('No se encontró stock para:', nombreStock);
                 }
             });
             
-            guardar('erp_stock', DB.stock);
-            ultimaFechaConsumo = fechaHoy;
-            localStorage.setItem('erp_ultima_fecha_consumo', fechaHoy);
-            
             if (consumos.length > 0) {
+                guardar('erp_stock', DB.stock);
+                ultimaFechaConsumo = fechaHoy;
+                localStorage.setItem('erp_ultima_fecha_consumo', fechaHoy);
+                
+                // Enviar a Google Sheets
                 fetch(URL_GS, { 
                     method: 'POST', 
                     headers: { 'Content-Type': 'text/plain' }, 
                     body: JSON.stringify({ accion: "descontar_consumo", consumos: consumos }) 
-                }).catch(() => {});
+                }).then(r => r.text()).then(t => {
+                    console.log('Descuento enviado:', t);
+                }).catch(e => {
+                    console.error('Error al descontar:', e);
+                });
             }
         }
         
@@ -245,7 +263,8 @@
             "Cerdo Acabado":{"Maíz":363.6,"Torta de Soya 45":118,"Aceite Vegetal":3.5,"Carbonato de Calcio":3.9,"Sal":2.0,"Fungiban 50%":0.5,"Cloruro de Colina":0.5,"Núcleo Cerdo Acabado":8}
         };
         
-        const INSUMOS = ["Maíz","Torta de Soya 45","Harina Integral Soya","Afrecho","Aceite Vegetal","Carbonato de Calcio","Sal","Fungiban 50%","Cloruro de Colina","Núcleo Pato Inicio","Núcleo Pato Crecimiento","Núcleo Pato Acabado","Núcleo Cerdo Inicio","Núcleo Cerdo Crecimiento","Núcleo Cerdo Desarrollo","Núcleo Cerdo Acabado"];
+        // CORREGIDO: Agregado Corimicyn al inicio de la lista
+        const INSUMOS = ["Corimicyn","Maíz","Torta de Soya 45","Harina Integral Soya","Afrecho","Aceite Vegetal","Carbonato de Calcio","Sal","Fungiban 50%","Cloruro de Colina","Núcleo Pato Inicio","Núcleo Pato Crecimiento","Núcleo Pato Acabado","Núcleo Cerdo Inicio","Núcleo Cerdo Crecimiento","Núcleo Cerdo Desarrollo","Núcleo Cerdo Acabado"];
         const LISTA_NUCLEOS = ["Núcleo Pato Inicio","Núcleo Pato Crecimiento","Núcleo Pato Acabado","Núcleo Cerdo Inicio","Núcleo Cerdo Crecimiento","Núcleo Cerdo Desarrollo","Núcleo Cerdo Acabado"];
         const NUCLEOS_KG = {"Núcleo Pato Inicio":10,"Núcleo Pato Crecimiento":10,"Núcleo Pato Acabado":10,"Núcleo Cerdo Inicio":8.5,"Núcleo Cerdo Crecimiento":9,"Núcleo Cerdo Desarrollo":6,"Núcleo Cerdo Acabado":8};
         
@@ -327,7 +346,8 @@
             if(!silencioso) document.getElementById('mainContent').innerHTML = '<p style="text-align:center;padding:40px;">⏳ Sincronizando...</p>';
             fetch(URL_GS).then(r=>r.json()).then(d=>{
                 DB.curva = d.curva || []; DB.protocolos = d.protocolos || [];
-                DB.stock = (d.inventario || []).map(s => ({nombre:s.nombre, cantidad:Math.abs(parseFloat(s.cantidad)||0)}));
+                // CORREGIDO: Eliminado Math.abs() para permitir valores negativos
+                DB.stock = (d.inventario || []).map(s => ({nombre:s.nombre, cantidad:parseFloat(s.cantidad)||0}));
                 guardar('erp_stock', DB.stock);
                 procesarConsumoDiario();
                 renderizar(vistaActual); agendarSync();
@@ -366,6 +386,7 @@
             for (let f in ps2) {
                 let nombreStock = f === 'Corimicyn' ? 'Corimicyn' : ('🥣 ' + f);
                 let item = DB.stock.find(x => x.nombre === nombreStock);
+                if (!item) item = DB.stock.find(x => x.nombre === f);
                 let stock = item ? Math.max(0, parseFloat(item.cantidad) || 0) : 0;
                 let dias = ps2[f] > 0 ? Math.floor(stock / ps2[f]) : 99;
                 let color = dias <= 1 ? '#e53e3c' : dias <= 3 ? '#e67e22' : '#38a169';
@@ -382,7 +403,7 @@
                     let stockStatus = '✅ Suficiente', stockColor = '#38a169';
                     let nombreStock = f === 'Corimicyn' ? 'Corimicyn' : ('🥣 ' + f);
                     if(RECETAS[f]) { let faltantes = []; for(let ing in RECETAS[f]) { let nec = (RECETAS[f][ing]/500) * ps[f], st = 0, it = DB.stock.find(x => x.nombre === ing); if(it) st = Math.abs(parseFloat(it.cantidad) || 0); if(nec > st) faltantes.push(ing); } if(faltantes.length > 2) { stockStatus = '🔴 Faltan'; stockColor = '#e53e3c'; } else if(faltantes.length > 0) { stockStatus = '🟡 Algunos'; stockColor = '#e67e22'; } }
-                    else { let it = DB.stock.find(x => x.nombre === nombreStock); let st = it ? Math.abs(parseFloat(it.cantidad) || 0) : 0; if(st < ps[f]) { stockStatus = '🔴 Faltan'; stockColor = '#e53e3c'; } else if(st < ps[f]*3) { stockStatus = '🟡 Bajo'; stockColor = '#e67e22'; } }
+                    else { let it = DB.stock.find(x => x.nombre === nombreStock); if (!it) it = DB.stock.find(x => x.nombre === f); let st = it ? Math.abs(parseFloat(it.cantidad) || 0) : 0; if(st < ps[f]) { stockStatus = '🔴 Faltan'; stockColor = '#e53e3c'; } else if(st < ps[f]*3) { stockStatus = '🟡 Bajo'; stockColor = '#e67e22'; } }
                     consumoTableHTML += `<tr><td><b>${f.startsWith('🥣')?f:'📦 '+f}</b></td><td style="font-weight:700;color:#1a4731;">${diario}</td><td style="font-weight:700;color:#1a4731;">${semanal}</td><td style="color:${stockColor};font-size:12px;">${stockStatus}</td></tr>`;
                 }
                 consumoTableHTML += `</tbody></table>`;
