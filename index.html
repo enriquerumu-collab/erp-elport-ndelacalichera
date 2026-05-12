@@ -546,18 +546,34 @@
             }
             
             // Calcular consumo por fórmula para próximas 2 semanas
-            let kpf={};
-            DB.lotes.forEach(l=>{
-                let sa=semF(l.fechaLlegada);
-                for(let s=0;s<=1;s++){
-                    let cs=cSemanal(l.especie,sa+s);
-                    if(cs>0){
-                        let f=getFormula(l.especie,sa+s);
-                        if(!kpf[s])kpf[s]={};
-                        kpf[s][f]=(kpf[s][f]||0)+(l.cantidad*cs);
-                    }
-                }
-            });
+           let kpf = {};
+DB.lotes.forEach(l => {
+    let sa = semF(l.fechaLlegada);
+    let diaActual = diaF(l.fechaLlegada);
+    let diasRestantesSemana = 7 - (diaActual % 7 || 7); // Días que faltan para terminar la semana
+    
+    for (let s = 0; s <= 1; s++) {
+        let semanaProyeccion = sa + s;
+        let cs = cSemanal(l.especie, semanaProyeccion);
+        
+        if (cs > 0) {
+            let f = getFormula(l.especie, semanaProyeccion);
+            let consumoProyectado;
+            
+            if (s === 0) {
+                // Semana actual: solo calcular lo que falta
+                let fraccionSemana = diasRestantesSemana / 7;
+                consumoProyectado = l.cantidad * cs * fraccionSemana;
+            } else {
+                // Próxima semana: semana completa
+                consumoProyectado = l.cantidad * cs;
+            }
+            
+            if (!kpf[s]) kpf[s] = {};
+            kpf[s][f] = (kpf[s][f] || 0) + consumoProyectado;
+        }
+    }
+});
             
             let ingS1={},nucS1={};
             for(let s in kpf){
