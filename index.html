@@ -176,20 +176,31 @@
             anulaciones: JSON.parse(localStorage.getItem('erp_anulaciones') || '[]'), carneStock: JSON.parse(localStorage.getItem('erp_carne_stock') || '[]')
         };
         
-        // ============ SISTEMA DE CONSUMO DIARIO AUTOMÁTICO ============
+        // ============ SISTEMA DE CONSUMO DIARIO AUTOMÁTICO (CORREGIDO) ============
         let ultimaFechaConsumo = localStorage.getItem('erp_ultima_fecha_consumo') || '';
         let fechaHoyConsumo = new Date().toISOString().split('T')[0];
         
         function procesarConsumoDiario() {
             if (!DB.lotes.length) return;
             let hoy = new Date();
-            let ayer = new Date(hoy); ayer.setDate(ayer.getDate() - 1);
-            let fechaAyer = ayer.toISOString().split('T')[0];
-            if (ultimaFechaConsumo === fechaHoyConsumo) return;
+            let fechaHoy = new Date().toISOString().split('T')[0];
             
-            let fechaInicio = ultimaFechaConsumo ? new Date(ultimaFechaConsumo + 'T00:00:00') : new Date(fechaAyer + 'T00:00:00');
+            // Si ya se procesó hoy, no hacer nada
+            if (ultimaFechaConsumo === fechaHoy) return;
+            
+            // Si es la primera vez, usar la fecha de ayer como referencia
+            if (!ultimaFechaConsumo) {
+                let ayer = new Date(hoy);
+                ayer.setDate(ayer.getDate() - 1);
+                ultimaFechaConsumo = ayer.toISOString().split('T')[0];
+            }
+            
+            let fechaInicio = new Date(ultimaFechaConsumo + 'T00:00:00');
             let diasTranscurridos = Math.floor((hoy - fechaInicio) / 86400000);
-            if (diasTranscurridos <= 0 || diasTranscurridos > 30) diasTranscurridos = 1;
+            
+            // Mínimo 1 día, máximo 7 por seguridad
+            if (diasTranscurridos <= 0) diasTranscurridos = 1;
+            if (diasTranscurridos > 7) diasTranscurridos = 7;
             
             let consumos = [];
             DB.lotes.forEach(l => {
@@ -198,19 +209,29 @@
                 let f = getFormula(l.especie, s);
                 let consumoTotal = l.cantidad * d * diasTranscurridos;
                 let nombreStock = f === 'Corimicyn' ? 'Corimicyn' : ('🥣 ' + f);
-                let item = DB.stock.find(x => x.nombre === nombreStock);
+                
+                // Buscar el item en stock (insensible a emoji)
+                let item = DB.stock.find(x => {
+                    let nombreLimpio = x.nombre.replace(/^🥣\s*/, '').trim();
+                    return nombreLimpio === f || x.nombre === nombreStock;
+                });
+                
                 if (item) {
                     item.cantidad = (parseFloat(item.cantidad) || 0) - consumoTotal;
-                    consumos.push({ alimento: nombreStock, kilos: consumoTotal });
+                    consumos.push({ alimento: f, kilos: Math.abs(consumoTotal) });
                 }
             });
             
             guardar('erp_stock', DB.stock);
-            ultimaFechaConsumo = fechaHoyConsumo;
-            localStorage.setItem('erp_ultima_fecha_consumo', fechaHoyConsumo);
+            ultimaFechaConsumo = fechaHoy;
+            localStorage.setItem('erp_ultima_fecha_consumo', fechaHoy);
             
             if (consumos.length > 0) {
-                fetch(URL_GS, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ accion: "descontar_consumo", consumos: consumos }) }).catch(() => {});
+                fetch(URL_GS, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'text/plain' }, 
+                    body: JSON.stringify({ accion: "descontar_consumo", consumos: consumos }) 
+                }).catch(() => {});
             }
         }
         
@@ -480,7 +501,112 @@
         
         function vCompras(){return`<div class="topbar"><h2>🛒 Compras</h2></div><div class="grid-2"><div class="card"><div class="card-header">📊 Pedidos Proyectados</div><div style="background:#f7fafc;padding:10px;border-radius:6px;"><h4>🛒 Ingredientes a Pedir <small style="font-size:10px;color:#718096;">(próx. 2 semanas +15% margen)</small></h4><div id="pedidoIng"></div></div><div style="background:#1a202c;padding:10px;border-radius:6px;margin-top:8px;"><h4 style="color:#fbd38d;">🏭 Núcleos Montana <small style="font-size:10px;color:#a0aec0;">(proyección 15 semanas)</small></h4><div id="pedidoNuc"></div></div></div><div class="card"><div class="card-header">🛍️ Compra Rápida</div><select id="compraInsumo">${INSUMOS.map(i=>`<option>${i}</option>`).join('')}</select><div class="form-row"><input type="number" id="compraKilos" placeholder="Kilos"><input type="number" id="compraCosto" placeholder="Costo"></div><button class="btn btn-accent btn-block" onclick="agregarCarrito()">➕ Añadir</button><table style="margin-top:8px;"><tr><th>Insumo</th><th>Kg</th><th>S/</th><th></th></tr><tbody id="cuerpoCarrito"></tbody></table><button id="btnProcesar" class="btn btn-primary btn-block" style="display:none;" onclick="envCarrito()">✅ Guardar</button></div></div>`;}
         function initCompras(){actualizarPedidos();actualizarCarrito();}
-        function actualizarPedidos(){let ing=document.getElementById('pedidoIng'),nuc=document.getElementById('pedidoNuc');if(!ing||!nuc||!DB.lotes.length){ing.innerHTML='<p style="color:#718096;">Sin lotes.</p>';nuc.innerHTML='<p style="color:#a0aec0;">Sin requerimiento.</p>';return;}let kpf={};DB.lotes.forEach(l=>{let sa=semF(l.fechaLlegada);for(let s=0;s<=1;s++){let cs=cSemanal(l.especie,sa+s);if(cs>0){let f=getFormula(l.especie,sa+s);if(f!=='Corimicyn'&&RECETAS[f]){if(!kpf[s])kpf[s]={};kpf[s][f]=(kpf[s][f]||0)+(l.cantidad*cs);}}}});let ingS1={},nucS1={};for(let s in kpf)for(let f in kpf[s])if(RECETAS[f])for(let ing in RECETAS[f]){let cant=(RECETAS[f][ing]/500)*kpf[s][f];if(LISTA_NUCLEOS.includes(ing))nucS1[ing]=(nucS1[ing]||0)+cant;else ingS1[ing]=(ingS1[ing]||0)+cant;}let h='',hay=false,tot=0;for(let ing in ingS1){let nec=ingS1[ing],st=0,it=DB.stock.find(x=>x.nombre===ing);if(it)st=Math.abs(parseFloat(it.cantidad)||0);let falta=nec-st;if(falta>0.01){hay=true;let cm=falta*1.15;tot+=cm;h+=`<div style="color:#c53030;">🔴 <b>${ing}:</b> ${cm.toFixed(2)} kg <small>(Stock: ${st.toFixed(2)})</small></div>`;}else h+=`<div style="color:#38a169;">✅ ${ing} (${st.toFixed(2)} kg)</div>`;}INSUMOS.forEach(ing=>{if(!LISTA_NUCLEOS.includes(ing)&&!ingS1[ing]){let st=0,it=DB.stock.find(x=>x.nombre===ing);if(it)st=Math.abs(parseFloat(it.cantidad)||0);if(st>0)h+=`<div style="color:#38a169;">✅ ${ing} - Stock: ${st.toFixed(2)} kg</div>`;}});if(!hay)h+='<p style="color:#38a169;">✅ Stock suficiente.</p>';else h+=`<div style="font-weight:700;">📦 Total: ${tot.toFixed(2)} kg (+15%)</div>`;ing.innerHTML=h;let nucleoPorFase={};DB.lotes.forEach(l=>{let sa=semF(l.fechaLlegada);for(let s=0;s<15;s++){let semana=sa+s,cs=cSemanal(l.especie,semana);if(cs>0){let f=getFormula(l.especie,semana);if(f!=='Corimicyn'&&RECETAS[f]){let fi=getFaseInfo(l.especie,semana);if(RECETAS[f]&&RECETAS[f][fi.nucleo]){let kgN=(RECETAS[f][fi.nucleo]/500)*(l.cantidad*cs);if(!nucleoPorFase[fi.nucleo])nucleoPorFase[fi.nucleo]={kgN:0,ps:semana,us:semana,fase:fi.nombre};nucleoPorFase[fi.nucleo].kgN+=kgN;if(semana<nucleoPorFase[fi.nucleo].ps)nucleoPorFase[fi.nucleo].ps=semana;if(semana>nucleoPorFase[fi.nucleo].us)nucleoPorFase[fi.nucleo].us=semana;}}}}});let nh='<table style="color:#e2e8f0;width:100%;">',ts=0;LISTA_NUCLEOS.forEach(n=>{let d=nucleoPorFase[n];if(d&&d.kgN>0.01){let st=0,it=DB.stock.find(x=>x.nombre===n);if(it)st=Math.abs(parseFloat(it.cantidad)||0);let sf=Math.ceil(Math.max(0,d.kgN-st)/(NUCLEOS_KG[n]||10));ts+=sf;let r=d.ps===d.us?`Sem ${d.ps}`:`Sem ${d.ps}-${d.us}`;nh+=`<tr><td><b>${n}</b> <small>(${r})</small></td><td>${sf>0?`<span class="badge badge-orange">${sf} saco(s)</span>`:'<span style="color:#68d391;">✅ OK</span>'}</td></tr>`;}});if(ts===0)nh+='<tr><td colspan="2" style="color:#68d391;">✅ Sin necesidad</td></tr>';nh+=`<tr><td>TOTAL</td><td>${ts} sacos</td></tr></table>`;if(ts>0&&ts<MIN_SACOS){nh+=`<div style="color:#fbd38d;">⚠️ Solo ${ts} sacos. Mín ${MIN_SACOS}.</div>`;}else if(ts>=MIN_SACOS){nh+=`<div style="color:#68d391;">✅ ¡${ts} sacos! 🚚</div>`;}nuc.innerHTML=nh;}
+        function actualizarPedidos(){
+            let ing=document.getElementById('pedidoIng'),nuc=document.getElementById('pedidoNuc');
+            if(!ing||!nuc||!DB.lotes.length){
+                ing.innerHTML='<p style="color:#718096;">Sin lotes.</p>';
+                nuc.innerHTML='<p style="color:#a0aec0;">Sin requerimiento.</p>';
+                return;
+            }
+            
+            // Calcular consumo por fórmula para próximas 2 semanas
+            let kpf={};
+            DB.lotes.forEach(l=>{
+                let sa=semF(l.fechaLlegada);
+                for(let s=0;s<=1;s++){
+                    let cs=cSemanal(l.especie,sa+s);
+                    if(cs>0){
+                        let f=getFormula(l.especie,sa+s);
+                        if(!kpf[s])kpf[s]={};
+                        kpf[s][f]=(kpf[s][f]||0)+(l.cantidad*cs);
+                    }
+                }
+            });
+            
+            let ingS1={},nucS1={};
+            for(let s in kpf){
+                for(let f in kpf[s]){
+                    // CORREGIDO: Ahora Corimicyn sí se incluye
+                    if(f === 'Corimicyn'){
+                        if(!ingS1[f]) ingS1[f] = 0;
+                        ingS1[f] += kpf[s][f];
+                    } else if(RECETAS[f]){
+                        for(let ing in RECETAS[f]){
+                            let cant=(RECETAS[f][ing]/500)*kpf[s][f];
+                            if(LISTA_NUCLEOS.includes(ing)) nucS1[ing]=(nucS1[ing]||0)+cant;
+                            else ingS1[ing]=(ingS1[ing]||0)+cant;
+                        }
+                    }
+                }
+            }
+            
+            let h='',hay=false,tot=0;
+            for(let ing in ingS1){
+                let nec=ingS1[ing],st=0,it=DB.stock.find(x=>x.nombre===ing);
+                if(it)st=Math.abs(parseFloat(it.cantidad)||0);
+                let falta=nec-st;
+                if(falta>0.01){
+                    hay=true;
+                    let cm=falta*1.15;
+                    tot+=cm;
+                    h+=`<div style="color:#c53030;">🔴 <b>${ing}:</b> ${cm.toFixed(2)} kg <small>(Stock: ${st.toFixed(2)})</small></div>`;
+                } else {
+                    h+=`<div style="color:#38a169;">✅ ${ing} (${st.toFixed(2)} kg)</div>`;
+                }
+            }
+            INSUMOS.forEach(ing=>{
+                if(!LISTA_NUCLEOS.includes(ing)&&!ingS1[ing]&&ing!=='Corimicyn'){
+                    let st=0,it=DB.stock.find(x=>x.nombre===ing);
+                    if(it)st=Math.abs(parseFloat(it.cantidad)||0);
+                    if(st>0)h+=`<div style="color:#38a169;">✅ ${ing} - Stock: ${st.toFixed(2)} kg</div>`;
+                }
+            });
+            if(!hay)h+='<p style="color:#38a169;">✅ Stock suficiente.</p>';
+            else h+=`<div style="font-weight:700;">📦 Total: ${tot.toFixed(2)} kg (+15%)</div>`;
+            ing.innerHTML=h;
+            
+            // Núcleos (sin cambios)
+            let nucleoPorFase={};
+            DB.lotes.forEach(l=>{
+                let sa=semF(l.fechaLlegada);
+                for(let s=0;s<15;s++){
+                    let semana=sa+s,cs=cSemanal(l.especie,semana);
+                    if(cs>0){
+                        let f=getFormula(l.especie,semana);
+                        if(f!=='Corimicyn'&&RECETAS[f]){
+                            let fi=getFaseInfo(l.especie,semana);
+                            if(RECETAS[f]&&RECETAS[f][fi.nucleo]){
+                                let kgN=(RECETAS[f][fi.nucleo]/500)*(l.cantidad*cs);
+                                if(!nucleoPorFase[fi.nucleo])nucleoPorFase[fi.nucleo]={kgN:0,ps:semana,us:semana,fase:fi.nombre};
+                                nucleoPorFase[fi.nucleo].kgN+=kgN;
+                                if(semana<nucleoPorFase[fi.nucleo].ps)nucleoPorFase[fi.nucleo].ps=semana;
+                                if(semana>nucleoPorFase[fi.nucleo].us)nucleoPorFase[fi.nucleo].us=semana;
+                            }
+                        }
+                    }
+                }
+            });
+            let nh='<table style="color:#e2e8f0;width:100%;">',ts=0;
+            LISTA_NUCLEOS.forEach(n=>{
+                let d=nucleoPorFase[n];
+                if(d&&d.kgN>0.01){
+                    let st=0,it=DB.stock.find(x=>x.nombre===n);
+                    if(it)st=Math.abs(parseFloat(it.cantidad)||0);
+                    let sf=Math.ceil(Math.max(0,d.kgN-st)/(NUCLEOS_KG[n]||10));
+                    ts+=sf;
+                    let r=d.ps===d.us?`Sem ${d.ps}`:`Sem ${d.ps}-${d.us}`;
+                    nh+=`<tr><td><b>${n}</b> <small>(${r})</small></td><td>${sf>0?`<span class="badge badge-orange">${sf} saco(s)</span>`:'<span style="color:#68d391;">✅ OK</span>'}</td></tr>`;
+                }
+            });
+            if(ts===0)nh+='<tr><td colspan="2" style="color:#68d391;">✅ Sin necesidad</td></tr>';
+            nh+=`<tr><td>TOTAL</td><td>${ts} sacos</td></tr></table>`;
+            if(ts>0&&ts<MIN_SACOS){
+                nh+=`<div style="color:#fbd38d;">⚠️ Solo ${ts} sacos. Mín ${MIN_SACOS}.</div>`;
+            }else if(ts>=MIN_SACOS){
+                nh+=`<div style="color:#68d391;">✅ ¡${ts} sacos! 🚚</div>`;
+            }
+            nuc.innerHTML=nh;
+        }
         function getFaseInfo(esp,sem){if(esp.includes("Pato")){if(sem===1)return{nombre:"Corimicyn",nucleo:null};if(sem<=3)return{nombre:"Pato Inicio",nucleo:"Núcleo Pato Inicio"};if(sem<=7)return{nombre:"Pato Crecimiento",nucleo:"Núcleo Pato Crecimiento"};return{nombre:"Pato Acabado",nucleo:"Núcleo Pato Acabado"};}else{if(sem<=4)return{nombre:"Cerdo Inicio",nucleo:"Núcleo Cerdo Inicio"};if(sem<=7)return{nombre:"Cerdo Crecimiento",nucleo:"Núcleo Cerdo Crecimiento"};if(sem<=10)return{nombre:"Cerdo Desarrollo",nucleo:"Núcleo Cerdo Desarrollo"};return{nombre:"Cerdo Acabado",nucleo:"Núcleo Cerdo Acabado"};}}
         let carrito=[];
         function agregarCarrito(){let i=document.getElementById('compraInsumo')?.value,k=document.getElementById('compraKilos')?.value,c=document.getElementById('compraCosto')?.value;if(!k||!c)return alert("❌ Completa");carrito.push({insumo:i,kilos:k,costo:c});actualizarCarrito();}
