@@ -334,17 +334,17 @@
         
         // CORREGIDO: window.onload simplificado
         window.onload = () => {
-            document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long',day:'numeric',month:'long'});
-            
-            let fechaGuardada = localStorage.getItem('erp_ultima_fecha_consumo');
-            if (DB.lotes.length > 0 && (!fechaGuardada || fechaGuardada < '2026-05-09')) {
-                localStorage.removeItem('erp_ultima_fecha_consumo');
-                ultimaFechaConsumo = '';
-                console.log('🔄 Fecha de consumo reseteada');
-            }
-            
-            sincronizar();
-        };
+    document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long', day:'numeric', month:'long'});
+    
+    let fechaGuardada = localStorage.getItem('erp_ultima_fecha_consumo');
+    if (DB.lotes.length > 0 && (!fechaGuardada || fechaGuardada < '2026-05-09')) {
+        localStorage.removeItem('erp_ultima_fecha_consumo');
+        ultimaFechaConsumo = '';
+        console.log('🔄 Fecha de consumo reseteada');
+    }
+    
+    sincronizar();
+};
         
         function navegar(view, el) {
             vistaActual = view; localStorage.setItem('erp_vista', view);
