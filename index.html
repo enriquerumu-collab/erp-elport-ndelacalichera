@@ -181,31 +181,35 @@
         let fechaHoyConsumo = new Date().toISOString().split('T')[0];
         
         function procesarConsumoDiario() {
-            if (!DB.lotes.length) return;
+            if (!DB.lotes.length) {
+                console.log('❌ No hay lotes');
+                return;
+            }
             
             let hoy = new Date();
             let fechaHoy = hoy.toISOString().split('T')[0];
             
-            // Si ya se procesó hoy, no hacer nada
-            if (ultimaFechaConsumo === fechaHoy) return;
+            console.log('=== PROCESANDO CONSUMO ===');
+            console.log('Fecha hoy:', fechaHoy);
+            console.log('Última fecha guardada:', ultimaFechaConsumo);
             
-            // Si es la primera vez, calcular desde la fecha de llegada del lote
+            if (ultimaFechaConsumo === fechaHoy) {
+                console.log('✅ Ya procesado hoy');
+                return;
+            }
+            
             if (!ultimaFechaConsumo) {
-                // Buscar la fecha más antigua de los lotes
-                let fechaMasAntigua = DB.lotes.reduce((min, l) => {
-                    return l.fechaLlegada < min ? l.fechaLlegada : min;
-                }, DB.lotes[0].fechaLlegada);
-                ultimaFechaConsumo = fechaMasAntigua;
+                ultimaFechaConsumo = DB.lotes[0].fechaLlegada;
+                console.log('📅 Primera vez, usando fecha llegada:', ultimaFechaConsumo);
             }
             
             let fechaInicio = new Date(ultimaFechaConsumo + 'T00:00:00');
             let diasTranscurridos = Math.floor((hoy - fechaInicio) / 86400000);
             
-            // Mínimo 1 día, máximo 7 por seguridad
             if (diasTranscurridos <= 0) diasTranscurridos = 1;
             if (diasTranscurridos > 7) diasTranscurridos = 7;
             
-            console.log('Procesando consumo de', diasTranscurridos, 'días desde', ultimaFechaConsumo);
+            console.log('📊 Días a procesar:', diasTranscurridos);
             
             let consumos = [];
             DB.lotes.forEach(l => {
@@ -214,24 +218,19 @@
                 let f = getFormula(l.especie, s);
                 let consumoTotal = l.cantidad * d * diasTranscurridos;
                 
-                console.log('Lote:', l.id, 'Fórmula:', f, 'Diario:', d, 'Total:', consumoTotal);
+                console.log('🦆 Lote:', l.id, '| Sem:', s, '| Fórmula:', f, '| Diario:', d.toFixed(3), '| Total a descontar:', consumoTotal.toFixed(2));
                 
-                // Buscar en stock (Corimicyn sin emoji, otros con 🥣)
-                let nombreStock = f === 'Corimicyn' ? 'Corimicyn' : ('🥣 ' + f);
-                let item = DB.stock.find(x => x.nombre === nombreStock);
-                
-                if (!item) {
-                    // Buscar sin emoji como fallback
-                    item = DB.stock.find(x => x.nombre === f);
-                }
+                let item = DB.stock.find(x => x.nombre === f);
+                if (!item) item = DB.stock.find(x => x.nombre === 'Corimicyn');
+                if (!item) item = DB.stock.find(x => x.nombre.includes && x.nombre.includes(f));
                 
                 if (item) {
-                    let stockAntes = parseFloat(item.cantidad) || 0;
-                    item.cantidad = stockAntes - consumoTotal;
-                    console.log('Stock', nombreStock, ':', stockAntes, '→', item.cantidad);
+                    let antes = parseFloat(item.cantidad) || 0;
+                    item.cantidad = antes - consumoTotal;
+                    console.log('📦 Stock ' + f + ': ' + antes.toFixed(2) + ' → ' + item.cantidad.toFixed(2) + ' kg');
                     consumos.push({ alimento: f, kilos: consumoTotal });
                 } else {
-                    console.log('No se encontró stock para:', nombreStock);
+                    console.log('⚠️ No encontré stock para:', f);
                 }
             });
             
@@ -239,18 +238,21 @@
                 guardar('erp_stock', DB.stock);
                 ultimaFechaConsumo = fechaHoy;
                 localStorage.setItem('erp_ultima_fecha_consumo', fechaHoy);
+                console.log('💾 Stock guardado. Nueva fecha:', fechaHoy);
                 
-                // Enviar a Google Sheets
                 fetch(URL_GS, { 
                     method: 'POST', 
                     headers: { 'Content-Type': 'text/plain' }, 
                     body: JSON.stringify({ accion: "descontar_consumo", consumos: consumos }) 
                 }).then(r => r.text()).then(t => {
-                    console.log('Descuento enviado:', t);
+                    console.log('☁️ Google Sheets actualizado:', t);
                 }).catch(e => {
-                    console.error('Error al descontar:', e);
+                    console.error('❌ Error Sheets:', e);
                 });
+            } else {
+                console.log('⚠️ No se procesaron consumos');
             }
+            console.log('=== FIN ===');
         }
         
         const RECETAS = {
@@ -330,24 +332,19 @@
         let syncTimer = null;
         function agendarSync() { if(syncTimer) clearTimeout(syncTimer); syncTimer = setTimeout(() => sincronizar(true), 300000); }
         
+        // CORREGIDO: window.onload simplificado
         window.onload = () => {
-    document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long',day:'numeric',month:'long'});
-    
-    // Forzar reset de ultimaFechaConsumo si hay lotes nuevos
-    if (DB.lotes.length > 0) {
-        let fechaLlegada = DB.lotes[0].fechaLlegada;
-        let fechaUltima = localStorage.getItem('erp_ultima_fecha_consumo');
-        
-        // Si nunca se ha procesado o la fecha guardada es muy antigua
-        if (!fechaUltima || fechaUltima < fechaLlegada) {
-            localStorage.setItem('erp_ultima_fecha_consumo', fechaLlegada);
-            ultimaFechaConsumo = fechaLlegada;
-        }
-    }
-    
-    procesarConsumoDiario();
-    sincronizar();
-};
+            document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long',day:'numeric',month:'long'});
+            
+            let fechaGuardada = localStorage.getItem('erp_ultima_fecha_consumo');
+            if (DB.lotes.length > 0 && (!fechaGuardada || fechaGuardada < '2026-05-09')) {
+                localStorage.removeItem('erp_ultima_fecha_consumo');
+                ultimaFechaConsumo = '';
+                console.log('🔄 Fecha de consumo reseteada');
+            }
+            
+            sincronizar();
+        };
         
         function navegar(view, el) {
             vistaActual = view; localStorage.setItem('erp_vista', view);
@@ -355,15 +352,20 @@
             if(el) el.classList.add('active'); renderizar(view);
         }
         
+        // CORREGIDO: sincronizar ejecuta procesarConsumoDiario DESPUÉS de obtener stock
         function sincronizar(silencioso) {
             if(!silencioso) document.getElementById('mainContent').innerHTML = '<p style="text-align:center;padding:40px;">⏳ Sincronizando...</p>';
             fetch(URL_GS).then(r=>r.json()).then(d=>{
                 DB.curva = d.curva || []; DB.protocolos = d.protocolos || [];
-                // CORREGIDO: Eliminado Math.abs() para permitir valores negativos
                 DB.stock = (d.inventario || []).map(s => ({nombre:s.nombre, cantidad:parseFloat(s.cantidad)||0}));
                 guardar('erp_stock', DB.stock);
-                procesarConsumoDiario();
-                renderizar(vistaActual); agendarSync();
+                
+                console.log('📦 Stock sincronizado:', DB.stock.length, 'items');
+                setTimeout(() => {
+                    procesarConsumoDiario();
+                    renderizar(vistaActual); 
+                    agendarSync();
+                }, 200);
             }).catch(e => { console.error(e); if(!silencioso) renderizar(vistaActual); });
         }
         
