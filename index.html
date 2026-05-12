@@ -331,10 +331,23 @@
         function agendarSync() { if(syncTimer) clearTimeout(syncTimer); syncTimer = setTimeout(() => sincronizar(true), 300000); }
         
         window.onload = () => {
-            document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long',day:'numeric',month:'long'});
-            procesarConsumoDiario();
-            sincronizar();
-        };
+    document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long',day:'numeric',month:'long'});
+    
+    // Forzar reset de ultimaFechaConsumo si hay lotes nuevos
+    if (DB.lotes.length > 0) {
+        let fechaLlegada = DB.lotes[0].fechaLlegada;
+        let fechaUltima = localStorage.getItem('erp_ultima_fecha_consumo');
+        
+        // Si nunca se ha procesado o la fecha guardada es muy antigua
+        if (!fechaUltima || fechaUltima < fechaLlegada) {
+            localStorage.setItem('erp_ultima_fecha_consumo', fechaLlegada);
+            ultimaFechaConsumo = fechaLlegada;
+        }
+    }
+    
+    procesarConsumoDiario();
+    sincronizar();
+};
         
         function navegar(view, el) {
             vistaActual = view; localStorage.setItem('erp_vista', view);
