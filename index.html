@@ -136,7 +136,7 @@
 </head>
 <body>
     <aside class="sidebar">
-        <div class="sidebar-logo"><h1>🌾 El Portón de<br>la Calichera 🌾</h1><small id="sidebarFecha"></small></div>
+        <div class="sidebar-logo"><h1>🌾 El Portón de<br>la Calichera 🌽</h1><small id="sidebarFecha"></small></div>
         <nav class="sidebar-nav">
             <a class="active" data-view="dashboard" onclick="navegar('dashboard',this)">📊 <span>Inicio</span></a>
             <a data-view="finanzas" onclick="navegar('finanzas',this)">📈 <span>Finanzas</span></a>
@@ -152,7 +152,7 @@
             <a data-view="tickets" onclick="navegar('tickets',this)">🧾 <span>Tickets</span></a>
             <a data-view="stock" onclick="navegar('stock',this)">📦 <span>Stock</span></a>
         </nav>
-        <div class="sidebar-footer">ERP v4.2 🌾</div>
+        <div class="sidebar-footer">ERP v4.2 🌽</div>
     </aside>
     <main class="main" id="mainContent"><p style="text-align:center;padding:40px;">Cargando...</p></main>
     <div id="modalContainer"></div>
@@ -176,7 +176,7 @@
             anulaciones: JSON.parse(localStorage.getItem('erp_anulaciones') || '[]'), carneStock: JSON.parse(localStorage.getItem('erp_carne_stock') || '[]')
         };
         
-        // ============ SISTEMA DE CONSUMO DIARIO AUTOMÁTICO (CORREGIDO) ============
+        // ============ SISTEMA DE CONSUMO DIARIO AUTOMÁTICO ============
         let ultimaFechaConsumo = localStorage.getItem('erp_ultima_fecha_consumo') || '';
         let fechaHoyConsumo = new Date().toISOString().split('T')[0];
         
@@ -265,7 +265,6 @@
             "Cerdo Acabado":{"Maíz":363.6,"Torta de Soya 45":118,"Aceite Vegetal":3.5,"Carbonato de Calcio":3.9,"Sal":2.0,"Fungiban 50%":0.5,"Cloruro de Colina":0.5,"Núcleo Cerdo Acabado":8}
         };
         
-        // CORREGIDO: Agregado Corimicyn al inicio de la lista
         const INSUMOS = ["Corimicyn","Maíz","Torta de Soya 45","Harina Integral Soya","Afrecho","Aceite Vegetal","Carbonato de Calcio","Sal","Fungiban 50%","Cloruro de Colina","Núcleo Pato Inicio","Núcleo Pato Crecimiento","Núcleo Pato Acabado","Núcleo Cerdo Inicio","Núcleo Cerdo Crecimiento","Núcleo Cerdo Desarrollo","Núcleo Cerdo Acabado"];
         const LISTA_NUCLEOS = ["Núcleo Pato Inicio","Núcleo Pato Crecimiento","Núcleo Pato Acabado","Núcleo Cerdo Inicio","Núcleo Cerdo Crecimiento","Núcleo Cerdo Desarrollo","Núcleo Cerdo Acabado"];
         const NUCLEOS_KG = {"Núcleo Pato Inicio":10,"Núcleo Pato Crecimiento":10,"Núcleo Pato Acabado":10,"Núcleo Cerdo Inicio":8.5,"Núcleo Cerdo Crecimiento":9,"Núcleo Cerdo Desarrollo":6,"Núcleo Cerdo Acabado":8};
@@ -332,19 +331,18 @@
         let syncTimer = null;
         function agendarSync() { if(syncTimer) clearTimeout(syncTimer); syncTimer = setTimeout(() => sincronizar(true), 300000); }
         
-        // CORREGIDO: window.onload simplificado
         window.onload = () => {
-    document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long', day:'numeric', month:'long'});
-    
-    let fechaGuardada = localStorage.getItem('erp_ultima_fecha_consumo');
-    if (DB.lotes.length > 0 && (!fechaGuardada || fechaGuardada < '2026-05-09')) {
-        localStorage.removeItem('erp_ultima_fecha_consumo');
-        ultimaFechaConsumo = '';
-        console.log('🔄 Fecha de consumo reseteada');
-    }
-    
-    sincronizar();
-};
+            document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long',day:'numeric',month:'long'});
+            
+            let fechaGuardada = localStorage.getItem('erp_ultima_fecha_consumo');
+            if (DB.lotes.length > 0 && (!fechaGuardada || fechaGuardada < '2026-05-09')) {
+                localStorage.removeItem('erp_ultima_fecha_consumo');
+                ultimaFechaConsumo = '';
+                console.log('🔄 Fecha de consumo reseteada');
+            }
+            
+            sincronizar();
+        };
         
         function navegar(view, el) {
             vistaActual = view; localStorage.setItem('erp_vista', view);
@@ -352,7 +350,6 @@
             if(el) el.classList.add('active'); renderizar(view);
         }
         
-        // CORREGIDO: sincronizar ejecuta procesarConsumoDiario DESPUÉS de obtener stock
         function sincronizar(silencioso) {
             if(!silencioso) document.getElementById('mainContent').innerHTML = '<p style="text-align:center;padding:40px;">⏳ Sincronizando...</p>';
             fetch(URL_GS).then(r=>r.json()).then(d=>{
@@ -537,6 +534,8 @@
         
         function vCompras(){return`<div class="topbar"><h2>🛒 Compras</h2></div><div class="grid-2"><div class="card"><div class="card-header">📊 Pedidos Proyectados</div><div style="background:#f7fafc;padding:10px;border-radius:6px;"><h4>🛒 Ingredientes a Pedir <small style="font-size:10px;color:#718096;">(próx. 2 semanas +15% margen)</small></h4><div id="pedidoIng"></div></div><div style="background:#1a202c;padding:10px;border-radius:6px;margin-top:8px;"><h4 style="color:#fbd38d;">🏭 Núcleos Montana <small style="font-size:10px;color:#a0aec0;">(proyección 15 semanas)</small></h4><div id="pedidoNuc"></div></div></div><div class="card"><div class="card-header">🛍️ Compra Rápida</div><select id="compraInsumo">${INSUMOS.map(i=>`<option>${i}</option>`).join('')}</select><div class="form-row"><input type="number" id="compraKilos" placeholder="Kilos"><input type="number" id="compraCosto" placeholder="Costo"></div><button class="btn btn-accent btn-block" onclick="agregarCarrito()">➕ Añadir</button><table style="margin-top:8px;"><tr><th>Insumo</th><th>Kg</th><th>S/</th><th></th></tr><tbody id="cuerpoCarrito"></tbody></table><button id="btnProcesar" class="btn btn-primary btn-block" style="display:none;" onclick="envCarrito()">✅ Guardar</button></div></div>`;}
         function initCompras(){actualizarPedidos();actualizarCarrito();}
+        
+        // ============ FUNCIÓN CORREGIDA: Solo muestra lo que falta comprar ============
         function actualizarPedidos(){
             let ing=document.getElementById('pedidoIng'),nuc=document.getElementById('pedidoNuc');
             if(!ing||!nuc||!DB.lotes.length){
@@ -545,47 +544,42 @@
                 return;
             }
             
-            // Calcular consumo por fórmula para próximas 2 semanas
-           let kpf = {};
-DB.lotes.forEach(l => {
-    let sa = semF(l.fechaLlegada);
-    let diaActual = diaF(l.fechaLlegada);
-    let diasRestantesSemana = 7 - (diaActual % 7 || 7); // Días que faltan para terminar la semana
-    
-    for (let s = 0; s <= 1; s++) {
-        let semanaProyeccion = sa + s;
-        let cs = cSemanal(l.especie, semanaProyeccion);
-        
-        if (cs > 0) {
-            let f = getFormula(l.especie, semanaProyeccion);
-            let consumoProyectado;
-            
-            if (s === 0) {
-                // Semana actual: solo calcular lo que falta
-                let fraccionSemana = diasRestantesSemana / 7;
-                consumoProyectado = l.cantidad * cs * fraccionSemana;
-            } else {
-                // Próxima semana: semana completa
-                consumoProyectado = l.cantidad * cs;
-            }
-            
-            if (!kpf[s]) kpf[s] = {};
-            kpf[s][f] = (kpf[s][f] || 0) + consumoProyectado;
-        }
-    }
-});
+            let kpf={};
+            DB.lotes.forEach(l=>{
+                let sa=semF(l.fechaLlegada);
+                let diaActual=diaF(l.fechaLlegada);
+                let diaEnSemana=diaActual%7;
+                if(diaEnSemana===0)diaEnSemana=7;
+                let diasRestantesSemana=7-diaEnSemana+1;
+                
+                for(let s=0;s<=1;s++){
+                    let semanaProyeccion=sa+s;
+                    let cs=cSemanal(l.especie,semanaProyeccion);
+                    if(cs>0){
+                        let f=getFormula(l.especie,semanaProyeccion);
+                        let consumoProyectado;
+                        if(s===0){
+                            let fraccionSemana=diasRestantesSemana/7;
+                            consumoProyectado=l.cantidad*cs*fraccionSemana;
+                        } else {
+                            consumoProyectado=l.cantidad*cs;
+                        }
+                        if(!kpf[s])kpf[s]={};
+                        kpf[s][f]=(kpf[s][f]||0)+consumoProyectado;
+                    }
+                }
+            });
             
             let ingS1={},nucS1={};
             for(let s in kpf){
                 for(let f in kpf[s]){
-                    // CORREGIDO: Ahora Corimicyn sí se incluye
-                    if(f === 'Corimicyn'){
-                        if(!ingS1[f]) ingS1[f] = 0;
-                        ingS1[f] += kpf[s][f];
+                    if(f==='Corimicyn'){
+                        if(!ingS1[f])ingS1[f]=0;
+                        ingS1[f]+=kpf[s][f];
                     } else if(RECETAS[f]){
                         for(let ing in RECETAS[f]){
                             let cant=(RECETAS[f][ing]/500)*kpf[s][f];
-                            if(LISTA_NUCLEOS.includes(ing)) nucS1[ing]=(nucS1[ing]||0)+cant;
+                            if(LISTA_NUCLEOS.includes(ing))nucS1[ing]=(nucS1[ing]||0)+cant;
                             else ingS1[ing]=(ingS1[ing]||0)+cant;
                         }
                     }
@@ -595,29 +589,22 @@ DB.lotes.forEach(l => {
             let h='',hay=false,tot=0;
             for(let ing in ingS1){
                 let nec=ingS1[ing],st=0,it=DB.stock.find(x=>x.nombre===ing);
-                if(it)st=Math.abs(parseFloat(it.cantidad)||0);
-                let falta=nec-st;
+                if(it)st=parseFloat(it.cantidad)||0;
+                let falta=Math.max(0,nec-st);
                 if(falta>0.01){
                     hay=true;
                     let cm=falta*1.15;
                     tot+=cm;
-                    h+=`<div style="color:#c53030;">🔴 <b>${ing}:</b> ${cm.toFixed(2)} kg <small>(Stock: ${st.toFixed(2)})</small></div>`;
+                    h+=`<div style="color:#c53030;">🔴 <b>${ing}:</b> ${cm.toFixed(2)} kg <small>(Falta comprar)</small></div>`;
                 } else {
-                    h+=`<div style="color:#38a169;">✅ ${ing} (${st.toFixed(2)} kg)</div>`;
+                    h+=`<div style="color:#38a169;">✅ ${ing}: Stock suficiente (${st.toFixed(2)} kg)</div>`;
                 }
             }
-            INSUMOS.forEach(ing=>{
-                if(!LISTA_NUCLEOS.includes(ing)&&!ingS1[ing]&&ing!=='Corimicyn'){
-                    let st=0,it=DB.stock.find(x=>x.nombre===ing);
-                    if(it)st=Math.abs(parseFloat(it.cantidad)||0);
-                    if(st>0)h+=`<div style="color:#38a169;">✅ ${ing} - Stock: ${st.toFixed(2)} kg</div>`;
-                }
-            });
-            if(!hay)h+='<p style="color:#38a169;">✅ Stock suficiente.</p>';
-            else h+=`<div style="font-weight:700;">📦 Total: ${tot.toFixed(2)} kg (+15%)</div>`;
+            if(!hay)h+='<p style="color:#38a169;">✅ Stock suficiente para 2 semanas.</p>';
+            else h+=`<div style="font-weight:700;margin-top:6px;">📦 Total a comprar: ${tot.toFixed(2)} kg (+15% margen)</div>`;
             ing.innerHTML=h;
             
-            // Núcleos (sin cambios)
+            // Núcleos
             let nucleoPorFase={};
             DB.lotes.forEach(l=>{
                 let sa=semF(l.fechaLlegada);
@@ -651,14 +638,15 @@ DB.lotes.forEach(l => {
                 }
             });
             if(ts===0)nh+='<tr><td colspan="2" style="color:#68d391;">✅ Sin necesidad</td></tr>';
-            nh+=`<tr><td>TOTAL</td><td>${ts} sacos</td></tr></table>`;
+            nh+=`<tr><td><b>TOTAL</b></td><td><b>${ts} sacos</b></td></tr></table>`;
             if(ts>0&&ts<MIN_SACOS){
-                nh+=`<div style="color:#fbd38d;">⚠️ Solo ${ts} sacos. Mín ${MIN_SACOS}.</div>`;
+                nh+=`<div style="color:#fbd38d;margin-top:4px;">⚠️ Solo ${ts} sacos. Mínimo ${MIN_SACOS} para pedido.</div>`;
             }else if(ts>=MIN_SACOS){
-                nh+=`<div style="color:#68d391;">✅ ¡${ts} sacos! 🚚</div>`;
+                nh+=`<div style="color:#68d391;">✅ ¡${ts} sacos! Pedido listo 🚚</div>`;
             }
             nuc.innerHTML=nh;
         }
+        
         function getFaseInfo(esp,sem){if(esp.includes("Pato")){if(sem===1)return{nombre:"Corimicyn",nucleo:null};if(sem<=3)return{nombre:"Pato Inicio",nucleo:"Núcleo Pato Inicio"};if(sem<=7)return{nombre:"Pato Crecimiento",nucleo:"Núcleo Pato Crecimiento"};return{nombre:"Pato Acabado",nucleo:"Núcleo Pato Acabado"};}else{if(sem<=4)return{nombre:"Cerdo Inicio",nucleo:"Núcleo Cerdo Inicio"};if(sem<=7)return{nombre:"Cerdo Crecimiento",nucleo:"Núcleo Cerdo Crecimiento"};if(sem<=10)return{nombre:"Cerdo Desarrollo",nucleo:"Núcleo Cerdo Desarrollo"};return{nombre:"Cerdo Acabado",nucleo:"Núcleo Cerdo Acabado"};}}
         let carrito=[];
         function agregarCarrito(){let i=document.getElementById('compraInsumo')?.value,k=document.getElementById('compraKilos')?.value,c=document.getElementById('compraCosto')?.value;if(!k||!c)return alert("❌ Completa");carrito.push({insumo:i,kilos:k,costo:c});actualizarCarrito();}
