@@ -550,7 +550,7 @@
                 let diaActual=diaF(l.fechaLlegada);
                 let diaEnSemana=diaActual%7;
                 if(diaEnSemana===0)diaEnSemana=7;
-                let diasRestantesSemana=7-diaEnSemana+1;
+                let diasRestantesSemana = 7 - diaEnSemana;  // Sin el +1, hoy ya pasó
                 
                 for(let s=0;s<=1;s++){
                     let semanaProyeccion=sa+s;
