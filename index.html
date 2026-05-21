@@ -462,7 +462,51 @@
         function ejecSexado(idx){let l=DB.lotes[idx],m=parseInt(document.getElementById('sexM_'+idx)?.value)||0,h=parseInt(document.getElementById('sexH_'+idx)?.value)||0;if(m+h===0)return alert("❌ Ingresa cantidades");if(m+h>l.cantidad)return alert("❌ Supera total");mostrarModal('🏥 Confirmar',`💙 Machos: ${m}<br>💗 Hembras: ${h}<br>⚠️ Bajas: ${l.cantidad-m-h}`,()=>{if(m>0)DB.lotes.push({id:l.id+"-M",especie:"Patos Machos",cantidad:m,fechaLlegada:l.fechaLlegada});if(h>0)DB.lotes.push({id:l.id+"-H",especie:"Patos Hembras",cantidad:h,fechaLlegada:l.fechaLlegada});DB.lotes.splice(idx,1);guardar('erp_lotes',DB.lotes);guardarEnSheets('actualizar_lote',{lote:{id:l.id,cantidad:0,activo:false}});if(m>0)guardarEnSheets('guardar_lote',{lote:{id:l.id+"-M",especie:"Patos Machos",cantidad:m,fechaLlegada:l.fechaLlegada}});if(h>0)guardarEnSheets('guardar_lote',{lote:{id:l.id+"-H",especie:"Patos Hembras",cantidad:h,fechaLlegada:l.fechaLlegada}});initLotes();});}
         function renderListaLotes(){let cont=document.getElementById('listaLotes');if(!cont)return;if(!DB.lotes.length){cont.innerHTML='<p>Sin lotes.</p>';return;}cont.innerHTML=DB.lotes.map((l,i)=>{let s=semF(l.fechaLlegada),d=l.cantidad*cDiario(l.especie,s),sm=d*7,f=getFormula(l.especie,s);let bs=l.especie==='Patos'?`<button class="btn btn-warning btn-xs" onclick="mostrarSexado(${i})">🏥</button>`:'';let bk=l.especie==='Cerdos'?`<button class="btn btn-purple btn-xs" onclick="mostrarSacrificio(${i})">🔪</button>`:'';return`<div style="display:flex;align-items:center;gap:10px;padding:12px;background:#f7fafc;border-radius:8px;margin-bottom:6px;"><div style="flex:1;"><b>${l.id}</b> - ${l.cantidad} ${l.especie} | Sem ${s}<br><small>🌽 ${d.toFixed(2)} kg/d | 📦 ${sm.toFixed(2)} kg/sem | 🍽️ ${f}</small></div><div><button class="btn btn-accent btn-xs" onclick="document.getElementById('loteSelect').value=${i};cargarLote();">📋</button>${bs}${bk}<button class="btn btn-danger btn-xs" onclick="mostrarModal('❌ Eliminar','¿Eliminar <b>${l.id}</b>?',()=>{DB.lotes.splice(${i},1);guardar('erp_lotes',DB.lotes);guardarEnSheets('actualizar_lote',{lote:{id:l.id,cantidad:0,activo:false}});initLotes();})">❌</button></div></div>`;}).join('');}
         function mostrarSacrificio(idx){let l=DB.lotes[idx];if(!l||l.especie!=='Cerdos')return;document.getElementById('modalContainer').innerHTML=`<div class="modal-overlay" id="mo"><div class="modal"><h3>🔪 Sacrificio: ${l.id}</h3><p>${l.cantidad} cerdos</p><label>Cantidad:</label><input type="number" id="sacCant" min="1" max="${l.cantidad}" value="1"><label>Kg carne POR CERDO:</label><input type="number" id="sacKgPorCerdo" placeholder="Kg por cada cerdo"><label>Fecha:</label><input type="date" id="sacFecha"><div class="modal-actions"><button class="btn btn-accent" onclick="cerrarModal()">Cancelar</button><button class="btn btn-purple" id="sacBtn">🔪 Confirmar</button></div></div></div>`;document.getElementById('sacFecha').valueAsDate=new Date();document.getElementById('mo').onclick=function(e){if(e.target===this)cerrarModal();};document.getElementById('sacBtn').onclick=function(){let cant=parseInt(document.getElementById('sacCant')?.value)||0,kgPorCerdo=parseFloat(document.getElementById('sacKgPorCerdo')?.value)||0,f=document.getElementById('sacFecha')?.value||new Date().toISOString().split('T')[0];if(cant<=0||cant>l.cantidad||kgPorCerdo<=0)return alert("❌ Datos inválidos");cerrarModal();l.cantidad-=cant;if(l.cantidad<=0)DB.lotes.splice(idx,1);for(let j=0;j<cant;j++){DB.carneStock.push({especie:l.especie,kg:kgPorCerdo,lote:l.id,fecha:f,id:'C_'+Date.now()+'_'+j});}DB.mortalidad.push({id:'MORT_'+Date.now(),loteId:l.id,especie:l.especie,cantidad:cant,causa:'Sacrificio',detalle:kgPorCerdo+' kg c/u',fecha:f});guardar('erp_lotes',DB.lotes);guardar('erp_carne_stock',DB.carneStock);guardar('erp_mortalidad',DB.mortalidad);guardarEnSheets('actualizar_lote',{lote:{id:l.id,cantidad:l.cantidad}});DB.carneStock.slice(-cant).forEach(item=>{guardarEnSheets('guardar_nevera',{nevera:item});});let mReg=DB.mortalidad[DB.mortalidad.length-1];guardarEnSheets('guardar_mortalidad',{mortalidad:mReg});initLotes();alert(`✅ ${cant} cerdo(s) sacrificado(s). ${kgPorCerdo.toFixed(2)} kg c/u → nevera.`);};}
-        function regLote(){let id=document.getElementById('loteID')?.value.trim(),esp=document.getElementById('loteEspecie')?.value,cant=parseInt(document.getElementById('loteCant')?.value),costo=document.getElementById('loteCosto')?.value,fecha=document.getElementById('loteFecha')?.value;if(!id||!cant||!costo)return alert("❌ Completa");mostrarModal('📝 Registrar',`<b>${id}</b><br>${esp}: ${cant}<br>Costo: S/ ${costo}`,()=>{peticion({accion:"comprar_multiple",lista:[{insumo:"Animales: "+esp+" ("+id+")",kilos:cant,costo:costo}]},()=>{DB.lotes.push({id,especie:esp,cantidad:cant,fechaLlegada:fecha});guardar('erp_lotes',DB.lotes);guardarEnSheets('guardar_lote',{lote:{id,especie:esp,cantidad:cant,fechaLlegada:fecha}});DB.gastos.unshift({fecha:fecha||new Date().toISOString().split('T')[0],concepto:"🐾 Compra: "+esp+" ("+id+")",monto:parseFloat(costo)});guardar('erp_gastos',DB.gastos);guardarEnSheets('guardar_gasto',{gasto:DB.gastos[0]});initLotes();});});}
+        function regLote(){
+    let id = document.getElementById('loteID')?.value.trim();
+    let esp = document.getElementById('loteEspecie')?.value;
+    let cant = parseInt(document.getElementById('loteCant')?.value);
+    let costo = document.getElementById('loteCosto')?.value;
+    let fecha = document.getElementById('loteFecha')?.value;
+
+    if(!id || !cant || !costo) return alert("❌ Completa todos los campos");
+
+    mostrarModal('📝 Registrar Lote',
+        `<b>${id}</b><br>${esp}: ${cant}<br>Costo: S/ ${costo}`,
+        () => {
+            // 1. Guardar lote localmente SIEMPRE primero
+            let nuevoLote = { id, especie: esp, cantidad: cant, fechaLlegada: fecha };
+            DB.lotes.push(nuevoLote);
+            guardar('erp_lotes', DB.lotes);
+
+            // 2. Registrar gasto localmente
+            let nuevoGasto = {
+                fecha: fecha || new Date().toISOString().split('T')[0],
+                concepto: "🐾 Compra: " + esp + " (" + id + ")",
+                monto: parseFloat(costo)
+            };
+            DB.gastos.unshift(nuevoGasto);
+            guardar('erp_gastos', DB.gastos);
+
+            // 3. Actualizar UI inmediatamente (sin esperar red)
+            initLotes();
+            alert(`✅ Lote "${id}" registrado correctamente.`);
+
+            // 4. Sincronizar con Sheets en segundo plano (no bloquea nada)
+            fetch(URL_GS, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    accion: "comprar_multiple",
+                    lista: [{ insumo: "Animales: " + esp + " (" + id + ")", kilos: cant, costo: costo }]
+                })
+            }).catch(() => {});  // silencioso si falla
+
+            guardarEnSheets('guardar_lote', { lote: nuevoLote });
+            guardarEnSheets('guardar_gasto', { gasto: nuevoGasto });
+        }
+    );
+}
         
         function vNevera(){
             let nevera=DB.carneStock||[];let totalKg=nevera.reduce((s,c)=>s+c.kg,0);
