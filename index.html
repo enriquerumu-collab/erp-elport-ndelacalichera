@@ -169,12 +169,19 @@
         limpiarDatos();
         
         let DB = {
-            lotes: JSON.parse(localStorage.getItem('erp_lotes') || '[]'), curva: [], protocolos: [], stock: [],
-            gastos: JSON.parse(localStorage.getItem('erp_gastos') || '[]'), clientes: JSON.parse(localStorage.getItem('erp_clientes') || '[]'),
-            ventasCredito: JSON.parse(localStorage.getItem('erp_ventas_credito') || '[]'), ventasContado: JSON.parse(localStorage.getItem('erp_ventas_contado') || '[]'),
-            abonos: JSON.parse(localStorage.getItem('erp_abonos') || '[]'), mortalidad: JSON.parse(localStorage.getItem('erp_mortalidad') || '[]'),
-            anulaciones: JSON.parse(localStorage.getItem('erp_anulaciones') || '[]'), carneStock: JSON.parse(localStorage.getItem('erp_carne_stock') || '[]')
-        };
+    lotes: JSON.parse(localStorage.getItem('erp_lotes') || '[]'), 
+    curva: [], 
+    protocolos: [], 
+    stock: [],
+    gastos: JSON.parse(localStorage.getItem('erp_gastos') || '[]'), 
+    clientes: JSON.parse(localStorage.getItem('erp_clientes') || '[]'),
+    ventasCredito: JSON.parse(localStorage.getItem('erp_ventas_credito') || '[]'), 
+    ventasContado: JSON.parse(localStorage.getItem('erp_ventas_contado') || '[]'),
+    abonos: JSON.parse(localStorage.getItem('erp_abonos') || '[]'), 
+    mortalidad: JSON.parse(localStorage.getItem('erp_mortalidad') || '[]'),
+    anulaciones: JSON.parse(localStorage.getItem('erp_anulaciones') || '[]'), 
+    carneStock: JSON.parse(localStorage.getItem('erp_carne_stock') || '[]')
+};
         
         // ============ SISTEMA DE CONSUMO DIARIO AUTOMÁTICO ============
         let ultimaFechaConsumo = localStorage.getItem('erp_ultima_fecha_consumo') || '';
@@ -351,20 +358,40 @@
         }
         
         function sincronizar(silencioso) {
-            if(!silencioso) document.getElementById('mainContent').innerHTML = '<p style="text-align:center;padding:40px;">⏳ Sincronizando...</p>';
-            fetch(URL_GS).then(r=>r.json()).then(d=>{
-                DB.curva = d.curva || []; DB.protocolos = d.protocolos || [];
-                DB.stock = (d.inventario || []).map(s => ({nombre:s.nombre, cantidad:parseFloat(s.cantidad)||0}));
-                guardar('erp_stock', DB.stock);
-                
-                console.log('📦 Stock sincronizado:', DB.stock.length, 'items');
-                setTimeout(() => {
-                    procesarConsumoDiario();
-                    renderizar(vistaActual); 
-                    agendarSync();
-                }, 200);
-            }).catch(e => { console.error(e); if(!silencioso) renderizar(vistaActual); });
-        }
+    if(!silencioso) document.getElementById('mainContent').innerHTML = '<p style="text-align:center;padding:40px;">⏳ Sincronizando...</p>';
+    fetch(URL_GS).then(r=>r.json()).then(d=>{
+        // Datos de Sheets (siempre disponibles)
+        DB.curva = d.curva || [];
+        DB.protocolos = d.protocolos || [];
+        DB.stock = (d.inventario || []).map(s => ({nombre:s.nombre, cantidad:parseFloat(s.cantidad)||0}));
+        
+        // NUEVOS: Cargar desde Sheets, con respaldo en localStorage
+        DB.lotes = (d.lotes && d.lotes.length > 0) ? d.lotes : JSON.parse(localStorage.getItem('erp_lotes') || '[]');
+        DB.clientes = (d.clientes && d.clientes.length > 0) ? d.clientes : JSON.parse(localStorage.getItem('erp_clientes') || '[]');
+        DB.ventasCredito = (d.ventasCredito && d.ventasCredito.length > 0) ? d.ventasCredito : JSON.parse(localStorage.getItem('erp_ventas_credito') || '[]');
+        DB.abonos = (d.abonos && d.abonos.length > 0) ? d.abonos : JSON.parse(localStorage.getItem('erp_abonos') || '[]');
+        DB.gastos = (d.gastosList && d.gastosList.length > 0) ? d.gastosList : JSON.parse(localStorage.getItem('erp_gastos') || '[]');
+        DB.mortalidad = (d.mortalidad && d.mortalidad.length > 0) ? d.mortalidad : JSON.parse(localStorage.getItem('erp_mortalidad') || '[]');
+        DB.carneStock = (d.nevera && d.nevera.length > 0) ? d.nevera : JSON.parse(localStorage.getItem('erp_carne_stock') || '[]');
+        
+        // Guardar en localStorage como respaldo
+        guardar('erp_stock', DB.stock);
+        guardar('erp_lotes', DB.lotes);
+        guardar('erp_clientes', DB.clientes);
+        guardar('erp_ventas_credito', DB.ventasCredito);
+        guardar('erp_abonos', DB.abonos);
+        guardar('erp_gastos', DB.gastos);
+        guardar('erp_mortalidad', DB.mortalidad);
+        guardar('erp_carne_stock', DB.carneStock);
+        
+        console.log('📦 Sincronizado:', DB.stock.length+' items,', DB.lotes.length+' lotes,', DB.clientes.length+' clientes');
+        setTimeout(() => {
+            procesarConsumoDiario();
+            renderizar(vistaActual); 
+            agendarSync();
+        }, 200);
+    }).catch(e => { console.error(e); if(!silencioso) renderizar(vistaActual); });
+}
         
         function renderizar(view) {
             vistaActual = view; let m = document.getElementById('mainContent'); if(!m) return;
