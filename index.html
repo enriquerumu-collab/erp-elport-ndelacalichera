@@ -545,9 +545,57 @@
         function actualizarCarrito(){let b=document.getElementById('cuerpoCarrito'),bp=document.getElementById('btnProcesar');if(!b)return;b.innerHTML=carrito.map((x,i)=>`<tr><td>${x.insumo}</td><td>${x.kilos}kg</td><td>S/${x.costo}</td><td><button class="btn btn-danger btn-xs" onclick="carrito.splice(${i},1);actualizarCarrito();">❌</button></td></tr>`).join('');if(bp)bp.style.display=carrito.length?'block':'none';}
         function envCarrito(){if(!carrito.length)return;let d=carrito.map(x=>`• ${x.insumo}: ${x.kilos} kg - S/ ${x.costo}`).join('<br>');mostrarModal('🛒 Confirmar',`<b>Resumen:</b><br>${d}`,()=>{carrito.forEach(item=>{let e=DB.stock.find(s=>s.nombre===item.insumo);if(e)e.cantidad=(parseFloat(e.cantidad)||0)+parseFloat(item.kilos);else DB.stock.push({nombre:item.insumo,cantidad:parseFloat(item.kilos)});});guardar('erp_stock',DB.stock);let fh=new Date().toISOString().split('T')[0];carrito.forEach(item=>{DB.gastos.unshift({fecha:fh,concepto:"🛒 Compra: "+item.insumo+" ("+item.kilos+" kg)",monto:parseFloat(item.costo)});guardarEnSheets('guardar_gasto',{gasto:DB.gastos[0]});});guardar('erp_gastos',DB.gastos);peticion({accion:"comprar_multiple",lista:carrito},()=>{carrito=[];actualizarCarrito();actualizarPedidos();sincronizar(true);});});}
         
-        function vPreparar(){return`<div class="topbar"><h2>🥣 Mezcladora</h2></div><div class="card"><select id="prepFormula" onchange="mostrarReceta()"><option value="">-- Fórmula --</option>${Object.keys(RECETAS).map(f=>`<option>${f}</option>`).join('')}</select><input type="number" id="prepKilos" placeholder="Kilos a preparar" oninput="mostrarReceta()"><div id="cajaReceta" style="display:none;background:#f0fff4;padding:10px;border-radius:6px;"><ul id="listaReceta"></ul></div><button class="btn btn-primary btn-block" onclick="regPreparar()">🥣 Preparar y Descontar</button><p style="font-size:11px;color:#718096;margin-top:6px;">⚠️ Al preparar, se descuentan los ingredientes y se agrega el alimento al stock.</p></div>`;}
+        function vPreparar(){return`<div class="topbar"><h2>🥣 Mezcladora</h2></div><div class="card"><select id="prepFormula" onchange="mostrarReceta()"><option value="">-- Fórmula --</option>${Object.keys(RECETAS).map(f=>`<option>${f}</option>`).join('')}</select><input type="number" id="prepKilos" placeholder="Kilos a preparar" oninput="mostrarReceta()"><label>📅 Fecha de preparación</label><input type="date" id="prepFecha"><div id="cajaReceta" style="display:none;background:#f0fff4;padding:10px;border-radius:6px;"><ul id="listaReceta"></ul></div><button class="btn btn-primary btn-block" onclick="regPreparar()">🥣 Preparar y Descontar</button><p style="font-size:11px;color:#718096;margin-top:6px;">⚠️ Si usas fecha anterior, el sistema recalculará el consumo automáticamente.</p></div>`;}
         function mostrarReceta(){let f=document.getElementById('prepFormula')?.value,k=document.getElementById('prepKilos')?.value,c=document.getElementById('cajaReceta'),l=document.getElementById('listaReceta');if(!f||!k||k<=0){c.style.display='none';return;}c.style.display='block';l.innerHTML=Object.entries(RECETAS[f]).map(([ing,v])=>`<li><b>${((v/500)*k).toFixed(2)} kg</b> - ${ing}</li>`).join('')+`<li style="margin-top:8px;border-top:1px solid #ccc;padding-top:8px;"><b style="color:#27ae60;">➕ ${k} kg de 🥣 ${f}</b></li>`;}
-        function regPreparar(){let f=document.getElementById('prepFormula')?.value,k=document.getElementById('prepKilos')?.value;if(!f||!k||k<=0)return alert("❌ Selecciona fórmula y cantidad");let detalleIng=Object.entries(RECETAS[f]).map(([ing,v])=>{let cant=((v/500)*k).toFixed(2);return`• ${ing}: <b style="color:#e53e3c;">-${cant} kg</b>`;}).join('<br>');let detalle=`<b>🥣 ${f}</b><br>Cantidad: ${k} kg<br><br><b>Ingredientes a descontar:</b><br>${detalleIng}<br><br><b style="color:#27ae60;">➕ Se agregarán ${k} kg de ${f} al stock</b>`;mostrarModal('🥣 Confirmar',detalle,()=>{Object.entries(RECETAS[f]).forEach(([ing,v])=>{let cant=(v/500)*k,item=DB.stock.find(s=>s.nombre===ing);if(item)item.cantidad=(parseFloat(item.cantidad)||0)-cant;else DB.stock.push({nombre:ing,cantidad:-cant});});let ak="🥣 "+f,ae=DB.stock.find(s=>s.nombre===ak);if(ae)ae.cantidad=(parseFloat(ae.cantidad)||0)+parseFloat(k);else DB.stock.push({nombre:ak,cantidad:parseFloat(k)});guardar('erp_stock',DB.stock);peticion({accion:"preparar",formula:f,kilos:k},()=>{document.getElementById('prepKilos').value='';document.getElementById('cajaReceta').style.display='none';sincronizar(true);alert(`✅ ${k} kg de ${f} preparados.`);});});}
+        function regPreparar(){
+    let f=document.getElementById('prepFormula')?.value,
+        k=document.getElementById('prepKilos')?.value,
+        fecha=document.getElementById('prepFecha')?.value || new Date().toISOString().split('T')[0];
+    
+    if(!f||!k||k<=0)return alert("❌ Selecciona fórmula y cantidad");
+    
+    let detalleIng=Object.entries(RECETAS[f]).map(([ing,v])=>{
+        let cant=((v/500)*k).toFixed(2);
+        return`• ${ing}: <b style="color:#e53e3c;">-${cant} kg</b>`;
+    }).join('<br>');
+    
+    let detalle=`<b>🥣 ${f}</b><br>Cantidad: ${k} kg<br>📅 Fecha: ${fecha}<br><br><b>Ingredientes a descontar:</b><br>${detalleIng}<br><br><b style="color:#27ae60;">➕ Se agregarán ${k} kg de ${f} al stock</b>`;
+    
+    mostrarModal('🥣 Confirmar',detalle,()=>{
+        // Descontar ingredientes
+        Object.entries(RECETAS[f]).forEach(([ing,v])=>{
+            let cant=(v/500)*k,
+                item=DB.stock.find(s=>s.nombre===ing);
+            if(item)item.cantidad=(parseFloat(item.cantidad)||0)-cant;
+            else DB.stock.push({nombre:ing,cantidad:-cant});
+        });
+        
+        // Agregar alimento preparado
+        let ak="🥣 "+f,
+            ae=DB.stock.find(s=>s.nombre===ak);
+        if(ae)ae.cantidad=(parseFloat(ae.cantidad)||0)+parseFloat(k);
+        else DB.stock.push({nombre:ak,cantidad:parseFloat(k)});
+        
+        guardar('erp_stock',DB.stock);
+        
+        // Enviar a Google Sheets con la fecha real
+        peticion({accion:"preparar",formula:f,kilos:k,fecha:fecha},()=>{
+            document.getElementById('prepKilos').value='';
+            document.getElementById('cajaReceta').style.display='none';
+            
+            // Si la fecha es anterior a hoy, recalcular consumo
+            let hoy=new Date().toISOString().split('T')[0];
+            if(fecha<hoy){
+                localStorage.removeItem('erp_ultima_fecha_consumo');
+                ultimaFechaConsumo='';
+                console.log('🔄 Fecha retroactiva ('+fecha+'). Recalculando consumo...');
+            }
+            
+            sincronizar(true);
+            alert(`✅ ${k} kg de ${f} preparados (${fecha}).`);
+        });
+    });
+}
         
         function vGastos(){return`<div class="topbar"><h2>💸 Gastos</h2></div><div class="grid-2"><div class="card"><select id="gastoConcepto"><option value="">-- Concepto --</option><option>💉 Vacuna</option><option>💊 Medicinas</option><option>👷 Jornal</option><option>🔧 Mantenimiento</option><option>📦 Otros</option></select><input type="text" id="gastoDetalle" placeholder="Detalle"><input type="number" id="gastoMonto" placeholder="Monto"><input type="date" id="gastoFecha"><button class="btn btn-primary btn-block" onclick="regGasto()">💸 Registrar</button></div><div class="card"><div class="card-header">Últimos</div><div id="listaGastos"></div></div></div>`;}
         function initGastos(){document.getElementById('gastoFecha').valueAsDate=new Date();renderGastos();}
