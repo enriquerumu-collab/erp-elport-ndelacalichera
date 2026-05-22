@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>ERP - El Portón de la Calichera</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
@@ -28,6 +28,7 @@
         .main { margin-left: 220px; flex: 1; padding: 24px 28px; max-width: 1200px; }
         .topbar { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         .topbar h2 { font-size: 24px; font-weight: 700; }
+        .sync-indicator { font-size: 11px; color: var(--text-light); }
         
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
@@ -80,10 +81,12 @@
         .alerta-item { padding: 10px 12px; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
         .alerta-critica { background: #fff5f5; border-left: 4px solid var(--danger); }
         .alerta-warning { background: #fffaf0; border-left: 4px solid var(--warning); }
+        .alerta-info { background: #ebf8ff; border-left: 4px solid var(--accent); }
         
         .badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; color: white; }
         .badge-red { background: var(--danger); }
         .badge-green { background: var(--primary); }
+        .badge-orange { background: var(--warning); }
         
         .cliente-search { position: relative; }
         .cliente-dropdown { position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: white; border: 2px solid var(--border); border-radius: 0 0 8px 8px; z-index: 100; display: none; }
@@ -126,7 +129,9 @@
 
     <script>
         // ============ CONFIGURACION ============
-        const API_URL = 'https://script.google.com/macros/s/AKfycbyRZG-_uWbF9fWp5_5um_YBMsCyDhvkDAAUwn_up-kAVHiS4earMyS3m1ec2HSlKwrC0A/exec';
+        // CAMBIA ESTA URL POR LA DE TU APPS SCRIPT
+        const API_URL = 'https://script.google.com/macros/s/AKfycbzNcEtrpPTbkHdm9ppWIUIb9TsocG22_WrZ4ALYAzrqVftpspeOuL8immuceFsSPin_eQ/exec';
+        
         const MIN_SACOS = 6;
         
         // ============ BASE DE DATOS ============
@@ -153,6 +158,7 @@
         
         let vistaActual = localStorage.getItem('erp_vista') || 'dashboard';
         
+        // ============ FUNCIONES DE ALMACENAMIENTO ============
         function guardarStorage() {
             localStorage.setItem('erp_lotes', JSON.stringify(DB.lotes));
             localStorage.setItem('erp_stock', JSON.stringify(DB.stock));
@@ -175,6 +181,7 @@
             setTimeout(() => msg.remove(), 3000);
         }
         
+        // ============ FUNCIONES DE FECHAS Y CONSUMO ============
         function semF(f) { if(!f) return 1; let s = Math.floor(Math.floor((new Date()-new Date(f+'T00:00:00'))/86400000)/7)+1; return s<1?1:s; }
         function diaF(f) { if(!f) return 1; return Math.floor((new Date()-new Date(f+'T00:00:00'))/86400000)+1; }
         function cDiario(esp,sem){ let c = DB.curva.find(x=>x.semana==sem); if(!c) return 0; if(esp==="Patos") return ((c.patoMacho||0)+(c.patoHembra||0))/2/7; if(esp.includes("Macho")) return (c.patoMacho||0)/7; if(esp.includes("Hembra")) return (c.patoHembra||0)/7; if(esp==="Cerdos") return (c.cerdo||0)/7; return 0; }
@@ -206,55 +213,212 @@
             return {nombre:"Cerdo Acabado",nucleo:"Nucleo Cerdo Acabado"};
         }
         
-        // ============ GUARDAR EN SHEETS ============
-        async function exportarRespaldo() {
-            mostrarMensaje('💾 Guardando en Google Sheets...');
-            try {
-                const datos = {
-                    lotes: DB.lotes, stock: DB.stock, clientes: DB.clientes,
-                    ventasCredito: DB.ventasCredito, ventasContado: DB.ventasContado,
-                    abonos: DB.abonos, gastosList: DB.gastos, mortalidad: DB.mortalidad,
-                    nevera: DB.carneStock, curva: DB.curva, protocolos: DB.protocolos
-                };
-                await fetch(API_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos) });
-                mostrarMensaje('✅ Solicitud enviada a Google Sheets');
-            } catch(e) { mostrarMensaje('❌ Error: ' + e.message); }
+        // ============ CARGAR DATOS INICIALES (con datos por defecto) ============
+        function cargarDatosLocales() {
+            let lotes = localStorage.getItem('erp_lotes');
+            let stock = localStorage.getItem('erp_stock');
+            let clientes = localStorage.getItem('erp_clientes');
+            let ventasCredito = localStorage.getItem('erp_ventas_credito');
+            let ventasContado = localStorage.getItem('erp_ventas_contado');
+            let abonos = localStorage.getItem('erp_abonos');
+            let gastos = localStorage.getItem('erp_gastos');
+            let mortalidad = localStorage.getItem('erp_mortalidad');
+            let carneStock = localStorage.getItem('erp_carne_stock');
+            let curva = localStorage.getItem('erp_curva');
+            let protocolos = localStorage.getItem('erp_protocolos');
+            
+            if (lotes) DB.lotes = JSON.parse(lotes);
+            if (stock) DB.stock = JSON.parse(stock);
+            if (clientes) DB.clientes = JSON.parse(clientes);
+            if (ventasCredito) DB.ventasCredito = JSON.parse(ventasCredito);
+            if (ventasContado) DB.ventasContado = JSON.parse(ventasContado);
+            if (abonos) DB.abonos = JSON.parse(abonos);
+            if (gastos) DB.gastos = JSON.parse(gastos);
+            if (mortalidad) DB.mortalidad = JSON.parse(mortalidad);
+            if (carneStock) DB.carneStock = JSON.parse(carneStock);
+            if (curva) DB.curva = JSON.parse(curva);
+            if (protocolos) DB.protocolos = JSON.parse(protocolos);
+            
+            // DATOS POR DEFECTO (PROTEGIDOS - solo si no existen)
+            if (DB.lotes.length === 0) {
+                DB.lotes = [{ id: "Patos Mayo", especie: "Patos", cantidad: 310, fechaLlegada: "2026-05-09" }];
+            }
+            if (DB.clientes.length === 0) {
+                DB.clientes = [{ id: "CLI_001", nombre: "Cliente Ejemplo", telefono: "999888777" }];
+            }
+            
+            // PROTOCOLOS POR DEFECTO (según tu Sheet)
+            if (DB.protocolos.length === 0) {
+                DB.protocolos = [
+                    { especie: "Pato", diaInicio: 1, diaFin: 17, tarea: "Vitaclick (Nicarbazina en agua)" },
+                    { especie: "Pato", diaInicio: 18, diaFin: 20, tarea: "Vitamaska" },
+                    { especie: "Pato", diaInicio: 21, diaFin: 22, tarea: "Despique + Vacuna Parvovirus" },
+                    { especie: "Pato", diaInicio: 23, diaFin: 24, tarea: "Vitaclick" },
+                    { especie: "Pato", diaInicio: 25, diaFin: 26, tarea: "Iniciar fórmula de CRECIMIENTO" },
+                    { especie: "Pato", diaInicio: 27, diaFin: 28, tarea: "Desparasitación" },
+                    { especie: "Pato", diaInicio: 29, diaFin: 30, tarea: "Desparasitación" },
+                    { especie: "Pato", diaInicio: 31, diaFin: 32, tarea: "Iniciar fórmula de ACABADO" },
+                    { especie: "Pato", diaInicio: 33, diaFin: 34, tarea: "Vitaclick (Refuerzo final)" },
+                    { especie: "Pato", diaInicio: 35, diaFin: 36, tarea: "Fomax (1ml) + Adevit (1ml)" },
+                    { especie: "Pato", diaInicio: 37, diaFin: 38, tarea: "Aditivos: Zinc 3g/kg + Secuestrante 1g/kg" },
+                    { especie: "Pato", diaInicio: 39, diaFin: 40, tarea: "Vermectina" },
+                    { especie: "Pato", diaInicio: 41, diaFin: 42, tarea: "Aditivos: Secuestrante 1g/kg (Retirar Zinc)" },
+                    { especie: "Pato", diaInicio: 43, diaFin: 44, tarea: "Iniciar fórmula de CRECIMIENTO" },
+                    { especie: "Pato", diaInicio: 45, diaFin: 46, tarea: "Refuerzo: Fomax (2.5ml) + Adevit (2ml)" },
+                    { especie: "Pato", diaInicio: 47, diaFin: 48, tarea: "Iniciar fórmula de DESARROLLO" },
+                    { especie: "Pato", diaInicio: 49, diaFin: 50, tarea: "Iniciar fórmula de ACABADO" },
+                    { especie: "Pato", diaInicio: 51, diaFin: 52, tarea: "Venta (Meta >100 kg)" }
+                ];
+            }
+            
+            // CURVA DE CONSUMO POR DEFECTO
+            if (DB.curva.length === 0) {
+                DB.curva = [
+                    { semana: 1, patoMacho: 0.16, patoHembra: 0.14, cerdo: 5.95 },
+                    { semana: 2, patoMacho: 0.36, patoHembra: 0.32, cerdo: 8.05 },
+                    { semana: 3, patoMacho: 0.63, patoHembra: 0.51, cerdo: 10.15 },
+                    { semana: 4, patoMacho: 1.02, patoHembra: 0.88, cerdo: 12.25 },
+                    { semana: 5, patoMacho: 1.40, patoHembra: 1.12, cerdo: 14.11 },
+                    { semana: 6, patoMacho: 1.44, patoHembra: 1.19, cerdo: 16.11 },
+                    { semana: 7, patoMacho: 1.66, patoHembra: 1.11, cerdo: 17.85 },
+                    { semana: 8, patoMacho: 1.75, patoHembra: 1.04, cerdo: 19.65 },
+                    { semana: 9, patoMacho: 1.64, patoHembra: 0.97, cerdo: 21.61 },
+                    { semana: 10, patoMacho: 1.53, patoHembra: 0.91, cerdo: 23.41 },
+                    { semana: 11, patoMacho: 1.44, patoHembra: 0.82, cerdo: 25.18 },
+                    { semana: 12, patoMacho: 1.38, patoHembra: 0.80, cerdo: 26.96 },
+                    { semana: 13, patoMacho: 1.26, patoHembra: 0.70, cerdo: 28.71 },
+                    { semana: 14, patoMacho: 1.00, patoHembra: 0.60, cerdo: 30.56 }
+                ];
+            }
+            
+            guardarStorage();
+            renderizar(vistaActual);
         }
         
-        async function importarRespaldo() {
-            mostrarMensaje('📁 Cargando desde Google Sheets...');
+        // ============ SINCRONIZACION SOLO LECTURA (NO ESCRIBE EN SHEET) ============
+        async function cargarDesdeSheetsSoloLectura() {
+            mostrarMensaje('📁 Cargando datos desde Google Sheets (solo lectura)...');
+            
             try {
                 const response = await fetch(API_URL + '?action=cargar');
                 const data = await response.json();
+                
                 if (data.success && data.datos) {
-                    if (data.datos.lotes) DB.lotes = data.datos.lotes;
-                    if (data.datos.stock) DB.stock = data.datos.stock;
-                    if (data.datos.clientes) DB.clientes = data.datos.clientes;
-                    if (data.datos.ventasCredito) DB.ventasCredito = data.datos.ventasCredito;
-                    if (data.datos.ventasContado) DB.ventasContado = data.datos.ventasContado;
-                    if (data.datos.abonos) DB.abonos = data.datos.abonos;
-                    if (data.datos.gastosList) DB.gastos = data.datos.gastosList;
-                    if (data.datos.mortalidad) DB.mortalidad = data.datos.mortalidad;
-                    if (data.datos.nevera) DB.carneStock = data.datos.nevera;
+                    let datosCargados = 0;
+                    
+                    // Cargar PROTOCOLOS (sin perder los existentes)
+                    if (data.datos.protocolos && data.datos.protocolos.length) {
+                        let protocolosExistentes = new Set(DB.protocolos.map(p => `${p.especie}|${p.diaInicio}|${p.diaFin}`));
+                        for (let p of data.datos.protocolos) {
+                            let clave = `${p.especie}|${p.diaInicio}|${p.diaFin}`;
+                            if (!protocolosExistentes.has(clave)) {
+                                DB.protocolos.push(p);
+                                datosCargados++;
+                            }
+                        }
+                        console.log(`📋 Protocolos: se agregaron ${datosCargados} nuevos`);
+                    }
+                    
+                    // Cargar CURVA DE CONSUMO
+                    if (data.datos.curva && data.datos.curva.length) {
+                        for (let c of data.datos.curva) {
+                            let idx = DB.curva.findIndex(ex => ex.semana === c.semana);
+                            if (idx !== -1) {
+                                DB.curva[idx] = c;
+                            } else {
+                                DB.curva.push(c);
+                            }
+                        }
+                        console.log(`📈 Curva de consumo: actualizada`);
+                    }
+                    
+                    // Cargar LOTES (solo si no existen)
+                    if (data.datos.lotes && data.datos.lotes.length) {
+                        let lotesExistentes = new Set(DB.lotes.map(l => l.id));
+                        for (let l of data.datos.lotes) {
+                            if (!lotesExistentes.has(l.id)) {
+                                DB.lotes.push(l);
+                                datosCargados++;
+                            }
+                        }
+                        console.log(`🦆 Lotes: se agregaron ${datosCargados} nuevos`);
+                    }
+                    
+                    // Cargar STOCK (acumular cantidades)
+                    if (data.datos.stock && data.datos.stock.length) {
+                        for (let s of data.datos.stock) {
+                            let existente = DB.stock.find(st => st.nombre === s.nombre);
+                            if (existente) {
+                                existente.cantidad += s.cantidad;
+                            } else {
+                                DB.stock.push(s);
+                            }
+                        }
+                        console.log(`📦 Stock: actualizado`);
+                    }
+                    
+                    // Cargar CLIENTES (solo si no existen)
+                    if (data.datos.clientes && data.datos.clientes.length) {
+                        let clientesExistentes = new Set(DB.clientes.map(c => c.id));
+                        for (let c of data.datos.clientes) {
+                            if (!clientesExistentes.has(c.id)) {
+                                DB.clientes.push(c);
+                            }
+                        }
+                        console.log(`👥 Clientes: actualizados`);
+                    }
+                    
+                    // Cargar GASTOS
+                    if (data.datos.gastosList && data.datos.gastosList.length) {
+                        for (let g of data.datos.gastosList) {
+                            DB.gastos.unshift(g);
+                        }
+                        console.log(`💸 Gastos: actualizados`);
+                    }
+                    
                     guardarStorage();
                     renderizar(vistaActual);
-                    mostrarMensaje('✅ Datos cargados desde Google Sheets');
-                } else { mostrarMensaje('❌ Error: ' + (data.error || 'No hay datos')); }
-            } catch(e) { mostrarMensaje('❌ Error de conexion: ' + e.message); }
+                    mostrarMensaje(`✅ Cargados ${datosCargados} nuevos datos desde el Sheet`);
+                    
+                    console.log("=== DATOS CARGADOS ===");
+                    console.log("Protocolos:", DB.protocolos.length);
+                    console.log("Curva:", DB.curva.length);
+                    console.log("Lotes:", DB.lotes.length);
+                    console.log("Stock:", DB.stock.length);
+                    
+                } else {
+                    mostrarMensaje('❌ Error: ' + (data.error || 'No se pudieron cargar los datos'));
+                }
+            } catch (error) {
+                console.error(error);
+                mostrarMensaje('❌ Error de conexión: ' + error.message);
+            }
+        }
+        
+        // ============ RESPALDO COMPLETO (ESCRIBE EN SHEET) - DESACTIVADO TEMPORALMENTE ============
+        async function exportarRespaldo() {
+            mostrarMensaje('⚠️ Escritura en Sheet desactivada por seguridad. Usa solo "Cargar desde Sheets".');
+            console.log('Escritura desactivada - para activar, cambiar la función exportarRespaldo()');
         }
         
         function agregarBotonesRespaldo() {
             let topbar = document.querySelector('.topbar');
             if (topbar && !document.getElementById('btnExportar')) {
-                let btnExportar = document.createElement('button');
-                btnExportar.id = 'btnExportar'; btnExportar.className = 'btn btn-accent btn-sm';
-                btnExportar.style.marginRight = '8px'; btnExportar.innerHTML = '💾 Guardar en Sheets';
-                btnExportar.onclick = exportarRespaldo;
-                let btnImportar = document.createElement('button');
-                btnImportar.id = 'btnImportar'; btnImportar.className = 'btn btn-warning btn-sm';
-                btnImportar.innerHTML = '📁 Cargar desde Sheets';
-                btnImportar.onclick = importarRespaldo;
-                topbar.appendChild(btnExportar); topbar.appendChild(btnImportar);
+                let btnCargar = document.createElement('button');
+                btnCargar.id = 'btnCargar';
+                btnCargar.className = 'btn btn-accent btn-sm';
+                btnCargar.style.marginRight = '8px';
+                btnCargar.innerHTML = '📁 Cargar desde Sheets (solo lectura)';
+                btnCargar.onclick = cargarDesdeSheetsSoloLectura;
+                
+                let btnInfo = document.createElement('button');
+                btnInfo.id = 'btnInfo';
+                btnInfo.className = 'btn btn-warning btn-sm';
+                btnInfo.innerHTML = 'ℹ️ Modo solo lectura';
+                btnInfo.onclick = () => mostrarMensaje('Modo seguro: Solo lectura desde Sheet. No se escribe nada en Google Sheets.');
+                
+                topbar.appendChild(btnCargar);
+                topbar.appendChild(btnInfo);
             }
         }
         
@@ -294,55 +458,11 @@
             setTimeout(() => { let b = document.getElementById('btnWA'); if(b) b.onclick = () => enviarWhatsAppImagen(ticketHTML); }, 100);
         }
         
-        // ============ CARGAR DATOS LOCALES ============
-        function cargarDatosLocales() {
-            let lotes = localStorage.getItem('erp_lotes');
-            let stock = localStorage.getItem('erp_stock');
-            let clientes = localStorage.getItem('erp_clientes');
-            let ventasCredito = localStorage.getItem('erp_ventas_credito');
-            let ventasContado = localStorage.getItem('erp_ventas_contado');
-            let abonos = localStorage.getItem('erp_abonos');
-            let gastos = localStorage.getItem('erp_gastos');
-            let mortalidad = localStorage.getItem('erp_mortalidad');
-            let carneStock = localStorage.getItem('erp_carne_stock');
-            let curva = localStorage.getItem('erp_curva');
-            let protocolos = localStorage.getItem('erp_protocolos');
-            
-            if (lotes) DB.lotes = JSON.parse(lotes);
-            if (stock) DB.stock = JSON.parse(stock);
-            if (clientes) DB.clientes = JSON.parse(clientes);
-            if (ventasCredito) DB.ventasCredito = JSON.parse(ventasCredito);
-            if (ventasContado) DB.ventasContado = JSON.parse(ventasContado);
-            if (abonos) DB.abonos = JSON.parse(abonos);
-            if (gastos) DB.gastos = JSON.parse(gastos);
-            if (mortalidad) DB.mortalidad = JSON.parse(mortalidad);
-            if (carneStock) DB.carneStock = JSON.parse(carneStock);
-            if (curva) DB.curva = JSON.parse(curva);
-            if (protocolos) DB.protocolos = JSON.parse(protocolos);
-            
-            if (DB.lotes.length === 0) DB.lotes = [{ id: "Patos Mayo", especie: "Patos", cantidad: 310, fechaLlegada: "2026-05-09" }];
-            if (DB.clientes.length === 0) DB.clientes = [{ id: "CLI_001", nombre: "Cliente Ejemplo", telefono: "999888777" }];
-            if (DB.curva.length === 0) {
-                for(let i=1;i<=12;i++) DB.curva.push({semana:i, patoMacho:1.2, patoHembra:1.0, cerdo:2.5});
-            }
-            if (DB.protocolos.length === 0) {
-                DB.protocolos = [
-                    {especie:"Pato", diaInicio:1, diaFin:7, tarea:"💉 Vacuna Newcastle"},
-                    {especie:"Pato", diaInicio:8, diaFin:14, tarea:"🩺 Desparasitacion"},
-                    {especie:"Cerdo", diaInicio:1, diaFin:5, tarea:"💉 Hierro"},
-                    {especie:"Cerdo", diaInicio:10, diaFin:15, tarea:"🩺 Desparasitacion"}
-                ];
-            }
-            guardarStorage();
-            renderizar(vistaActual);
-        }
-        
-        function sincronizar() { cargarDatosLocales(); }
-        
-        // ============ NAVEGACION ============
+        // ============ NAVEGACION Y RENDERIZADO ============
         window.onload = () => {
             document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long',day:'numeric',month:'long'});
             cargarDatosLocales();
+            setTimeout(agregarBotonesRespaldo, 500);
         };
         
         function navegar(view, el) {
@@ -355,7 +475,7 @@
             vistaActual = view; let m = document.getElementById('mainContent'); if(!m) return;
             switch(view) {
                 case 'dashboard': m.innerHTML = vDashboard(); setTimeout(initGraficos, 100); setTimeout(agregarBotonesRespaldo, 200); break;
-                case 'finanzas': m.innerHTML = vFinanzas(); break;
+                case 'finanzas': m.innerHTML = vFinanzas(); setTimeout(initFinanzasGraficos, 100); break;
                 case 'lotes': m.innerHTML = vLotes(); setTimeout(initLotes,50); break;
                 case 'compras': m.innerHTML = vCompras(); setTimeout(initCompras,50); break;
                 case 'preparar': m.innerHTML = vPreparar(); break;
@@ -371,11 +491,13 @@
         
         // ============ DASHBOARD ============
         function vDashboard(){
+            if(!DB.lotes.length && !DB.stock.length) return '<div class="topbar"><h2>📊 Inicio</h2></div><div class="card"><p>Sin datos. <button class="btn btn-accent" onclick="cargarDatosLocales()">Cargar</button></p></div>';
             let ta = DB.lotes.reduce((s,l)=>s+l.cantidad,0), cd = 0, ps = {};
             DB.lotes.forEach(l=>{let s=semF(l.fechaLlegada), d=cDiario(l.especie,s); cd += l.cantidad*d; let f=getFormula(l.especie,s); ps[f] = (ps[f]||0) + (l.cantidad*d*7);});
             let dt=0; DB.clientes.forEach(c=>{let tv=DB.ventasCredito.filter(v=>v.clienteId===c.id&&!v.anulado).reduce((s,v)=>s+v.total,0), ta2=DB.abonos.filter(a=>a.clienteId===c.id).reduce((s,a)=>s+a.monto,0); dt += Math.max(0,tv-ta2);});
             let carneKg = DB.carneStock.reduce((s,c)=>s+c.kg,0);
             
+            // Días de alimento
             let diasRestante = '';
             let ps2 = {};
             DB.lotes.forEach(l => { let s = semF(l.fechaLlegada); let d = cDiario(l.especie, s); let f = getFormula(l.especie, s); ps2[f] = (ps2[f] || 0) + (l.cantidad * d); });
@@ -387,115 +509,175 @@
                 diasRestante += '<div>' + icono + ' <b>' + f + ':</b> ' + dias + ' dias (' + stock.toFixed(1) + ' kg)</div>';
             }
             
+            // Tareas HOY
             let tHoy = '';
-            DB.lotes.forEach(l=>{ let d = diaF(l.fechaLlegada); let tp = l.especie.toLowerCase().includes('pato') ? 'pato' : 'cerdo'; DB.protocolos.forEach(p=>{ if(p.especie.toLowerCase().includes(tp) && d>=p.diaInicio && d<=p.diaFin){ tHoy += '<div class="tarea-item tarea-hoy"><div class="tarea-badge" style="background:#e74c3c">HOY</div><div><b>' + l.id + ':</b> ' + p.tarea + '</div></div>'; } }); });
-            if(!tHoy) tHoy = '<p>Sin tareas hoy</p>';
+            console.log("=== BUSCANDO TAREAS HOY ===");
+            DB.lotes.forEach(l=>{ 
+                let d = diaF(l.fechaLlegada);
+                console.log(`Lote ${l.id}: día ${d}`);
+                let tp = l.especie.toLowerCase().includes('pato') ? 'pato' : 'cerdo';
+                DB.protocolos.forEach(p=>{ 
+                    let ep = (p.especie || "").toLowerCase();
+                    if(ep.includes(tp) && d >= p.diaInicio && d <= p.diaFin){
+                        console.log(`✅ Tarea encontrada: ${p.tarea} (día ${p.diaInicio}-${p.diaFin})`);
+                        tHoy += '<div class="tarea-item tarea-hoy"><div class="tarea-badge" style="background:#e74c3c">HOY</div><div><b>' + l.id + ':</b> ' + p.tarea + '<br><small>Día ' + (d-p.diaInicio+1) + '/' + (p.diaFin-p.diaInicio+1) + '</small></div></div>';
+                    }
+                });
+            });
+            if(!tHoy) tHoy = '<p>✅ Sin tareas programadas para hoy</p>';
             
+            // Alertas de stock bajo
             let alertasHTML = '';
-            DB.stock.forEach(s=>{ let c = parseFloat(s.cantidad)||0; if(c<=0 && s.nombre && s.nombre!="0") alertasHTML += '<div class="alerta-item alerta-critica"><b>🔴 ' + s.nombre + ' AGOTADO</b></div>'; else if(c<10) alertasHTML += '<div class="alerta-item alerta-warning"><b>🟡 ' + s.nombre + ':</b> ' + c.toFixed(2) + ' kg</div>'; });
+            DB.stock.forEach(s=>{ let c = parseFloat(s.cantidad)||0; if(c<=0.1 && s.nombre && s.nombre!="0") alertasHTML += '<div class="alerta-item alerta-critica"><b>🔴 ' + s.nombre + ' AGOTADO</b></div>'; else if(c<10 && c>0) alertasHTML += '<div class="alerta-item alerta-warning"><b>🟡 ' + s.nombre + ':</b> ' + c.toFixed(2) + ' kg</div>'; });
+            if(!alertasHTML) alertasHTML = '<p>✅ Stock suficiente</p>';
             
+            // Datos para gráfico
             let labelsStock = [], dataStock = [];
-            DB.stock.forEach(s => { let c = parseFloat(s.cantidad) || 0; if(c > 0 && s.nombre && !s.nombre.startsWith("Animales:") && !s.nombre.startsWith("GASTO:")) { labelsStock.push(s.nombre.length > 15 ? s.nombre.substring(0,15)+'...' : s.nombre); dataStock.push(c); } });
+            DB.stock.forEach(s => { let c = parseFloat(s.cantidad) || 0; if(c > 0 && s.nombre && !s.nombre.startsWith("🥣") && !s.nombre.startsWith("Animales:")) { labelsStock.push(s.nombre.length > 15 ? s.nombre.substring(0,15)+'...' : s.nombre); dataStock.push(c); } });
             if(labelsStock.length > 10) { labelsStock = labelsStock.slice(0,10); dataStock = dataStock.slice(0,10); }
             
-            return '<div class="topbar"><h2>📊 Inicio</h2></div><div class="kpi-row"><div class="kpi-card kpi-green"><div class="kpi-val">' + ta + '</div><div class="kpi-lbl">Animales</div></div><div class="kpi-card kpi-green"><div class="kpi-val">' + cd.toFixed(2) + ' kg</div><div class="kpi-lbl">Comida/Dia</div></div><div class="kpi-card kpi-red"><div class="kpi-val">S/ ' + dt.toFixed(0) + '</div><div class="kpi-lbl">Por Cobrar</div></div><div class="kpi-card kpi-blue"><div class="kpi-val">' + carneKg.toFixed(1) + ' kg</div><div class="kpi-lbl">Nevera</div></div></div><div class="grid-2"><div class="card"><div class="card-header">📅 Dias de Alimento</div>' + diasRestante + '</div><div class="card"><div class="card-header">📋 Tareas HOY</div>' + tHoy + '</div></div><div class="grid-2"><div class="card"><div class="card-header">📦 Stock</div><div class="chart-container"><canvas id="graficoStock"></canvas></div></div><div class="card"><div class="card-header">🔔 Alertas</div>' + alertasHTML + '</div></div><div id="graficosData" style="display:none;" data-labels-stock=\'' + JSON.stringify(labelsStock) + '\' data-data-stock=\'' + JSON.stringify(dataStock) + '\'></div>';
+            let html = `
+            <div class="topbar"><h2>📊 Inicio</h2><span class="sync-indicator">💾 Modo seguro - Solo lectura</span></div>
+            <div class="kpi-row">
+                <div class="kpi-card kpi-green"><div class="kpi-val">${ta}</div><div class="kpi-lbl">🐾 ANIMALES</div></div>
+                <div class="kpi-card kpi-green"><div class="kpi-val">${cd.toFixed(2)} kg</div><div class="kpi-lbl">🌽 COMIDA/DÍA</div></div>
+                <div class="kpi-card kpi-red"><div class="kpi-val">S/ ${dt.toFixed(0)}</div><div class="kpi-lbl">💰 POR COBRAR</div></div>
+                <div class="kpi-card kpi-blue"><div class="kpi-val">${carneKg.toFixed(1)} kg</div><div class="kpi-lbl">🥩 NEVERA</div></div>
+            </div>
+            <div class="grid-2">
+                <div class="card"><div class="card-header">📅 Días de Alimento</div>${diasRestante || '<p>Sin datos de consumo</p>'}</div>
+                <div class="card"><div class="card-header">📋 Tareas HOY</div>${tHoy}</div>
+            </div>
+            <div class="grid-2">
+                <div class="card"><div class="card-header">📦 Stock Principal</div><div class="chart-container"><canvas id="graficoStock"></canvas></div></div>
+                <div class="card"><div class="card-header">🔔 Alertas de Stock</div>${alertasHTML}</div>
+            </div>
+            <div id="graficosData" style="display:none;" data-labels-stock='${JSON.stringify(labelsStock)}' data-data-stock='${JSON.stringify(dataStock)}'></div>
+            `;
+            return html;
         }
         
         function initGraficos() {
             let gd = document.getElementById('graficosData'); if(!gd) return;
             let ctx = document.getElementById('graficoStock');
-            if(ctx) { let labels = JSON.parse(gd.dataset.labelsStock || '[]'), data = JSON.parse(gd.dataset.dataStock || '[]'); if(labels.length) { new Chart(ctx, { type: 'doughnut', data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#27ae60','#2ecc71','#3498db','#f1c40f','#e67e22','#e74c3c'] }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } } } }); } }
+            if(ctx) { 
+                let labels = JSON.parse(gd.dataset.labelsStock || '[]'); 
+                let data = JSON.parse(gd.dataset.dataStock || '[]'); 
+                if(labels.length) { 
+                    new Chart(ctx, { type: 'doughnut', data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#27ae60','#2ecc71','#3498db','#f1c40f','#e67e22','#e74c3c','#9b59b6','#1abc9c'] }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } } } }); 
+                }
+            }
         }
         
         // ============ FINANZAS ============
-        function vFinanzas(){
-            let hoy=new Date(), m=hoy.getMonth(), a=hoy.getFullYear();
-            let ic=DB.ventasContado.filter(v=>{let d=new Date(v.fecha); return d.getMonth()===m&&d.getFullYear()===a&&!v.anulado;}).reduce((s,v)=>s+v.total,0);
-            let ab=DB.abonos.filter(x=>{let d=new Date(x.fecha); return d.getMonth()===m&&d.getFullYear()===a;}).reduce((s,x)=>s+x.monto,0);
-            let gm=DB.gastos.filter(g=>{let d=new Date(g.fecha); return d.getMonth()===m&&d.getFullYear()===a;}).reduce((s,g)=>s+g.monto,0);
-            return '<div class="topbar"><h2>📈 Finanzas</h2></div><div class="kpi-row"><div class="kpi-card kpi-green"><div class="kpi-val">S/ ' + ic.toFixed(2) + '</div><div class="kpi-lbl">Ventas Contado</div></div><div class="kpi-card kpi-green"><div class="kpi-val">S/ ' + ab.toFixed(2) + '</div><div class="kpi-lbl">Abonos</div></div><div class="kpi-card kpi-red"><div class="kpi-val">S/ ' + gm.toFixed(2) + '</div><div class="kpi-lbl">Gastos</div></div></div>';
+        function vFinanzas() {
+            let totalVentasContado = DB.ventasContado.reduce((s,v)=>s+v.total,0);
+            let totalVentasCredito = DB.ventasCredito.reduce((s,v)=>s+v.total,0);
+            let totalAbonos = DB.abonos.reduce((s,a)=>s+a.monto,0);
+            let totalGastos = DB.gastos.reduce((s,g)=>s+g.monto,0);
+            let totalVentas = totalVentasContado + totalVentasCredito;
+            let porCobrar = totalVentasCredito - totalAbonos;
+            
+            return `
+            <div class="topbar"><h2>📈 Finanzas</h2></div>
+            <div class="kpi-row">
+                <div class="kpi-card kpi-green"><div class="kpi-val">S/ ${totalVentas.toFixed(2)}</div><div class="kpi-lbl">💰 TOTAL VENTAS</div><small>${totalVentasContado.toFixed(2)} contado / ${totalVentasCredito.toFixed(2)} crédito</small></div>
+                <div class="kpi-card ${(totalVentas-totalGastos)>=0?'kpi-green':'kpi-red'}"><div class="kpi-val">S/ ${(totalVentas-totalGastos).toFixed(2)}</div><div class="kpi-lbl">📊 UTILIDAD</div></div>
+                <div class="kpi-card kpi-red"><div class="kpi-val">S/ ${totalGastos.toFixed(2)}</div><div class="kpi-lbl">💸 GASTOS</div></div>
+                <div class="kpi-card ${porCobrar>0?'kpi-red':'kpi-green'}"><div class="kpi-val">S/ ${porCobrar.toFixed(2)}</div><div class="kpi-lbl">⚠️ POR COBRAR</div></div>
+            </div>
+            <div class="card">
+                <div class="card-header">📋 Últimos Gastos</div>
+                <table style="width:100%"><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>
+                ${DB.gastos.slice(0,10).map(g => `<tr><td>${g.fecha}</td><td>${g.concepto}</td><td style="color:#e74c3c">S/ ${g.monto.toFixed(2)}</td></tr>`).join('') || '<tr><td colspan="3">No hay gastos registrados</td></tr>'}
+                </tbody></table>
+            </div>
+            `;
         }
+        
+        function initFinanzasGraficos() {}
         
         // ============ LOTES ============
         function vLotes(){
-            return '<div class="topbar"><h2>🦆 Lotes</h2></div><div class="grid-2"><div class="card"><div class="card-header">➕ Nuevo</div><input type="text" id="loteID" placeholder="Nombre"><select id="loteEspecie"><option>🦆 Patos</option><option>🐷 Cerdos</option></select><input type="date" id="loteFecha"><div class="form-row"><input type="number" id="loteCant" placeholder="Cantidad"><input type="number" id="loteCosto" placeholder="Costo S/"></div><button class="btn btn-primary" onclick="regLote()">Registrar</button></div><div class="card"><div class="card-header">📋 Detalle</div><select id="loteSelect" onchange="cargarLote()"><option value="">-- Selecciona --</option>' + DB.lotes.map((l,i)=>'<option value="' + i + '">' + l.id + ' - Sem ' + semF(l.fechaLlegada) + ' (' + l.cantidad + ')</option>').join('') + '</select><div id="loteInfo" style="display:none;"></div><div id="sexadoContainer"></div></div></div><div class="card"><div class="card-header">📊 Lotes Activos</div><div id="listaLotes"></div></div>';
+            return '<div class="topbar"><h2>🦆 Lotes</h2></div><div class="grid-2"><div class="card"><div class="card-header">➕ Nuevo Lote</div><input type="text" id="loteID" placeholder="Nombre"><select id="loteEspecie"><option>🦆 Patos</option><option>🐷 Cerdos</option></select><input type="date" id="loteFecha"><div class="form-row"><input type="number" id="loteCant" placeholder="Cantidad"><input type="number" id="loteCosto" placeholder="Costo S/"></div><button class="btn btn-primary" onclick="regLote()">Registrar</button></div><div class="card"><div class="card-header">📋 Lotes Activos</div><div id="listaLotes"></div></div></div>';
         }
-        function initLotes(){ actualizarSelectLotes(); renderListaLotes(); document.getElementById('loteFecha').valueAsDate = new Date(); }
-        function actualizarSelectLotes(){ let s = document.getElementById('loteSelect'); if(s) s.innerHTML = '<option value="">-- Selecciona --</option>' + DB.lotes.map((l,i)=>'<option value="' + i + '">' + l.id + ' - Sem ' + semF(l.fechaLlegada) + ' (' + l.cantidad + ')</option>').join(''); }
-        function cargarLote(){ let idx = document.getElementById('loteSelect')?.value, info = document.getElementById('loteInfo'), sex = document.getElementById('sexadoContainer'); if(!info || idx===""){ info.style.display='none'; if(sex) sex.innerHTML=''; return; } let l = DB.lotes[idx], s = semF(l.fechaLlegada), d = l.cantidad * cDiario(l.especie,s), f = getFormula(l.especie,s); info.style.display='block'; info.innerHTML = '<b>' + l.id + '</b> | ' + l.especie + ' | ' + l.cantidad + '<br>📅 Semana ' + s + '<br>🌽 Diario: <b>' + d.toFixed(2) + ' kg</b> | 🍽️ ' + f; if(sex) sex.innerHTML = l.especie==="Patos" ? '<button class="btn btn-warning" onclick="mostrarSexado(' + idx + ')">🏥 Sexar</button><div id="formSexado_' + idx + '"></div>' : ''; }
-        function mostrarSexado(idx){ let l = DB.lotes[idx], div = document.getElementById('formSexado_'+idx); if(!div) return; div.innerHTML = '<div style="background:#fff5f5;border:2px dashed #e53e3c;padding:15px;"><h4>Sexado: ' + l.id + '</h4><p>Total: ' + l.cantidad + '</p><div class="form-row"><div><label>💙 Machos</label><input type="number" id="sexM_' + idx + '" value="0"></div><div><label>💗 Hembras</label><input type="number" id="sexH_' + idx + '" value="0"></div></div><button class="btn btn-warning" onclick="ejecSexado(' + idx + ')">Confirmar</button></div>'; }
-        function ejecSexado(idx){ let l = DB.lotes[idx], m = parseInt(document.getElementById('sexM_'+idx)?.value)||0, h = parseInt(document.getElementById('sexH_'+idx)?.value)||0; if(m+h===0) return alert("Ingresa cantidades"); if(m+h > l.cantidad) return alert("Supera total"); mostrarModal('Confirmar Sexado', '💙 Machos: ' + m + '<br>💗 Hembras: ' + h + '<br>⚠️ Bajas: ' + (l.cantidad-m-h), () => { if(m>0) DB.lotes.push({ id: l.id+"-M", especie: "Patos Machos", cantidad: m, fechaLlegada: l.fechaLlegada }); if(h>0) DB.lotes.push({ id: l.id+"-H", especie: "Patos Hembras", cantidad: h, fechaLlegada: l.fechaLlegada }); DB.lotes.splice(idx,1); guardarStorage(); sincronizar(); initLotes(); }); }
-        function renderListaLotes(){ let cont = document.getElementById('listaLotes'); if(!cont) return; if(!DB.lotes.length){ cont.innerHTML = '<p>Sin lotes.</p>'; return; } cont.innerHTML = DB.lotes.map((l,i)=>{ let s = semF(l.fechaLlegada), d = l.cantidad * cDiario(l.especie,s); return '<div style="display:flex;justify-content:space-between;padding:12px;background:#f7fafc;margin-bottom:6px;border-radius:8px;"><div><b>' + l.id + '</b> - ' + l.cantidad + ' ' + l.especie + '<br><small>🌽 ' + d.toFixed(2) + ' kg/dia</small></div><button class="btn btn-danger btn-xs" onclick="eliminarLote(\'' + l.id + '\')">❌</button></div>'; }).join(''); }
-        function eliminarLote(id){ mostrarModal('Eliminar', '¿Eliminar ' + id + '?', () => { DB.lotes = DB.lotes.filter(l=>l.id!==id); guardarStorage(); sincronizar(); }); }
-        function regLote(){ let id = document.getElementById('loteID')?.value.trim(), esp = document.getElementById('loteEspecie')?.value, cant = parseInt(document.getElementById('loteCant')?.value), costo = document.getElementById('loteCosto')?.value, fecha = document.getElementById('loteFecha')?.value; if(!id||!cant||!costo) return alert("Completa"); mostrarModal('Registrar', id + '<br>' + esp + ': ' + cant + '<br>Costo: S/ ' + costo, () => { DB.lotes.push({ id, especie: esp, cantidad: cant, fechaLlegada: fecha }); guardarStorage(); DB.gastos.unshift({ fecha: fecha||new Date().toISOString().split('T')[0], concepto: "🐾 Compra: "+esp+" ("+id+")", monto: parseFloat(costo) }); guardarStorage(); sincronizar(); }); }
+        function initLotes(){ renderListaLotes(); document.getElementById('loteFecha').valueAsDate = new Date(); }
+        function renderListaLotes(){ let cont = document.getElementById('listaLotes'); if(!cont) return; if(!DB.lotes.length){ cont.innerHTML = '<p>Sin lotes.</p>'; return; } cont.innerHTML = DB.lotes.map((l,i)=>{ let s = semF(l.fechaLlegada), d = l.cantidad * cDiario(l.especie,s); return '<div style="display:flex;justify-content:space-between;padding:12px;background:#f7fafc;margin-bottom:6px;border-radius:8px;"><div><b>' + l.id + '</b> - ' + l.cantidad + ' ' + l.especie + '<br><small>📅 Semana ' + s + ' | 🌽 ' + d.toFixed(2) + ' kg/día</small></div><button class="btn btn-danger btn-xs" onclick="eliminarLote(\'' + l.id + '\')">❌</button></div>'; }).join(''); }
+        function eliminarLote(id){ mostrarModal('Eliminar', '¿Eliminar ' + id + '?', () => { DB.lotes = DB.lotes.filter(l=>l.id!==id); guardarStorage(); renderizar(vistaActual); }); }
+        function regLote(){ let id = document.getElementById('loteID')?.value.trim(), esp = document.getElementById('loteEspecie')?.value, cant = parseInt(document.getElementById('loteCant')?.value), costo = document.getElementById('loteCosto')?.value, fecha = document.getElementById('loteFecha')?.value; if(!id||!cant||!costo) return alert("Completa todos los campos"); mostrarModal('Registrar Lote', `${id}<br>${esp}: ${cant}<br>Costo: S/ ${costo}`, () => { DB.lotes.push({ id, especie: esp, cantidad: cant, fechaLlegada: fecha }); guardarStorage(); DB.gastos.unshift({ fecha: fecha||new Date().toISOString().split('T')[0], concepto: "🐾 Compra: "+esp+" ("+id+")", monto: parseFloat(costo) }); guardarStorage(); renderizar(vistaActual); mostrarMensaje('Lote registrado'); }); }
         
         // ============ STOCK ============
-        function vStock(){ let h='<table><thead><tr><th>📦 INSUMO</th><th>⚖️ KG</th><th></th></tr></thead><tbody>'; DB.stock.forEach((s,i)=>{ h+='<tr><td><b>' + s.nombre + '</b></td><td>' + (parseFloat(s.cantidad).toFixed(2)) + ' kg</td><td><button class="btn btn-danger btn-xs" onclick="eliminarStock(' + i + ')">🗑️</button></td></tr>'; }); h+='</tbody></table>'; return '<div class="topbar"><h2>📦 Stock</h2><button class="btn btn-accent btn-sm" onclick="sincronizar()">Actualizar</button></div><div class="card">' + h + '</div>'; }
-        function eliminarStock(i){ let item = DB.stock[i]; if(!item) return; mostrarModal('Eliminar', 'Eliminar ' + item.nombre + '?', () => { DB.stock.splice(i,1); guardarStorage(); sincronizar(); }); }
+        function vStock(){ let h='<table><thead><tr><th>📦 INSUMO</th><th>⚖️ KG</th><th></th></tr></thead><tbody>'; DB.stock.forEach((s,i)=>{ h+='<tr><td><b>' + s.nombre + '</b></td><td>' + (parseFloat(s.cantidad).toFixed(2)) + ' kg</td><td><button class="btn btn-danger btn-xs" onclick="eliminarStock(' + i + ')">🗑️</button></td></tr>'; }); h+='</tbody></table>'; return '<div class="topbar"><h2>📦 Stock</h2><button class="btn btn-accent btn-sm" onclick="cargarDatosLocales()">Actualizar</button></div><div class="card">' + h + '</div>'; }
+        function eliminarStock(i){ let item = DB.stock[i]; if(!item) return; mostrarModal('Eliminar', 'Eliminar ' + item.nombre + '?', () => { DB.stock.splice(i,1); guardarStorage(); renderizar(vistaActual); }); }
         
         // ============ VENTAS ============
         let cliV = null;
         function buscarClienteV(){ let i = document.getElementById('buscarClienteV'), dd = document.getElementById('dropdownClientesV'), t = (i?.value||'').toLowerCase(); if(!dd) return; let f = DB.clientes.filter(c=>c.nombre.toLowerCase().includes(t)); dd.innerHTML = f.map(c=>'<div onclick="selCliV(\'' + c.id + '\',\'' + c.nombre + '\')">👤 ' + c.nombre + '</div>').join(''); dd.classList.add('show'); }
         function selCliV(id,n){ cliV = {id:id, nombre:n}; document.getElementById('buscarClienteV').value = n; document.getElementById('dropdownClientesV').classList.remove('show'); }
         function toggleNuevoCliV(){ let d = document.getElementById('vCliN'); if(d) d.style.display = d.style.display==='none'?'block':'none'; }
-        function crearCliV(){ let n = document.getElementById('vCliNom')?.value.trim(), t = document.getElementById('vCliTel')?.value.trim(); if(!n) return alert("Nombre"); let id = 'CLI_'+Date.now(); DB.clientes.push({ id, nombre: n, telefono: t||'' }); guardarStorage(); selCliV(id,n); document.getElementById('vCliN').style.display = 'none'; }
-        function getClienteV(){ if(cliV) return DB.clientes.find(x=>x.id===cliV.id); alert("Selecciona cliente"); return null; }
+        function crearCliV(){ let n = document.getElementById('vCliNom')?.value.trim(), t = document.getElementById('vCliTel')?.value.trim(); if(!n) return alert("Nombre requerido"); let id = 'CLI_'+Date.now(); DB.clientes.push({ id, nombre: n, telefono: t||'' }); guardarStorage(); selCliV(id,n); document.getElementById('vCliN').style.display = 'none'; mostrarMensaje('Cliente creado'); }
+        function getClienteV(){ if(cliV) return DB.clientes.find(x=>x.id===cliV.id); alert("Selecciona un cliente"); return null; }
         
-        function vVentas(){ return '<div class="topbar"><h2>💰 Ventas</h2></div><div class="grid-2"><div class="card"><div class="card-header">💵 Nueva Venta</div><label>🔍 Cliente</label><div class="cliente-search"><input type="text" id="buscarClienteV" placeholder="Buscar..." oninput="buscarClienteV()" autocomplete="off"><div class="cliente-dropdown" id="dropdownClientesV"></div></div><button class="btn btn-accent btn-sm" onclick="toggleNuevoCliV()">➕ Nuevo</button><div id="vCliN" style="display:none;"><input type="text" id="vCliNom" placeholder="Nombre"><input type="text" id="vCliTel" placeholder="Tel"><button class="btn btn-primary btn-sm" onclick="crearCliV()">Guardar</button></div><label>Origen</label><select id="vOrigen" onchange="actOrigen()"><option value="lote">📦 Lote</option><option value="nevera">🥩 Nevera</option></select><div id="vLoteDiv"><label>Lote</label><select id="vLote" onchange="actLoteV()">' + DB.lotes.map((l,i)=>'<option value="' + i + '">' + l.id + ' (' + l.cantidad + ')</option>').join('') + '</select><div id="vPatosFields" style="display:none;"><div class="form-row"><div><label>🦆 Cabezas</label><input type="number" id="vCabezas" oninput="calcTotV()"></div><div><label>⚖️ Peso</label><input type="number" id="vKg" oninput="calcTotV()"></div></div></div><div id="vCerdoFields" style="display:none;"><label>⚖️ Kg</label><input type="number" id="vKgCerdo" oninput="calcTotV()"></div></div><div id="vNeveraDiv" style="display:none;"><label>Nevera</label><select id="vNevera">' + DB.carneStock.map((c,i)=>'<option value="' + i + '">' + c.especie + ' - ' + c.kg.toFixed(2) + ' kg</option>').join('') + '</select><label>⚖️ Kg</label><input type="number" id="vKgNevera" oninput="calcTotV()"></div><label>💰 Precio</label><input type="number" id="vPrecio" oninput="calcTotV()"><div id="vResumen" style="display:none;background:#f0fff4;padding:10px;border-radius:6px;font-size:20px;font-weight:700;text-align:center;"></div><div class="form-row"><button class="btn btn-primary" onclick="vender(\'contado\')">💰 Contado</button><button class="btn btn-warning" onclick="vender(\'credito\')">💳 Credito</button></div></div><div class="card"><div class="card-header">📋 Ultimas</div><div id="ultimasV"></div></div></div>'; }
+        function vVentas(){ return '<div class="topbar"><h2>💰 Ventas</h2></div><div class="grid-2"><div class="card"><div class="card-header">💵 Nueva Venta</div><label>🔍 Cliente</label><div class="cliente-search"><input type="text" id="buscarClienteV" placeholder="Buscar..." oninput="buscarClienteV()" autocomplete="off"><div class="cliente-dropdown" id="dropdownClientesV"></div></div><button class="btn btn-accent btn-sm" onclick="toggleNuevoCliV()">➕ Nuevo Cliente</button><div id="vCliN" style="display:none;"><input type="text" id="vCliNom" placeholder="Nombre"><input type="text" id="vCliTel" placeholder="Teléfono"><button class="btn btn-primary btn-sm" onclick="crearCliV()">Guardar</button></div><label>Origen</label><select id="vOrigen" onchange="actOrigen()"><option value="lote">📦 Lote</option><option value="nevera">🥩 Nevera</option></select><div id="vLoteDiv"><label>Lote</label><select id="vLote" onchange="actLoteV()">' + DB.lotes.map((l,i)=>'<option value="' + i + '">' + l.id + ' (' + l.cantidad + ')</option>').join('') + '</select><div id="vPatosFields" style="display:none;"><div class="form-row"><div><label>🦆 Cabezas</label><input type="number" id="vCabezas" oninput="calcTotV()"></div><div><label>⚖️ Peso (kg)</label><input type="number" id="vKg" oninput="calcTotV()"></div></div></div><div id="vCerdoFields" style="display:none;"><label>⚖️ Kg</label><input type="number" id="vKgCerdo" oninput="calcTotV()"></div></div><div id="vNeveraDiv" style="display:none;"><label>Nevera</label><select id="vNevera">' + DB.carneStock.map((c,i)=>'<option value="' + i + '">' + c.especie + ' - ' + c.kg.toFixed(2) + ' kg</option>').join('') + '</select><label>⚖️ Kg</label><input type="number" id="vKgNevera" oninput="calcTotV()"></div><label>💰 Precio x kg</label><input type="number" id="vPrecio" oninput="calcTotV()"><div id="vResumen" style="display:none;background:#f0fff4;padding:10px;border-radius:6px;font-size:20px;font-weight:700;text-align:center;"></div><div class="form-row"><button class="btn btn-primary" onclick="vender(\'contado\')">💰 Contado</button><button class="btn btn-warning" onclick="vender(\'credito\')">💳 Crédito</button></div></div><div class="card"><div class="card-header">📋 Últimas Ventas</div><div id="ultimasV"></div></div></div>'; }
         function initVentas(){ renderUltimasV(); cliV = null; if(document.getElementById('buscarClienteV')) document.getElementById('buscarClienteV').value = ''; }
         function actOrigen(){ let o = document.getElementById('vOrigen')?.value; document.getElementById('vLoteDiv').style.display = o==='lote'?'block':'none'; document.getElementById('vNeveraDiv').style.display = o==='nevera'?'block':'none'; if(o==='lote') actLoteV(); }
         function actLoteV(){ let idx = document.getElementById('vLote')?.value; if(idx==="") return; let l = DB.lotes[idx]; if(l.especie.includes('Pato')){ document.getElementById('vPatosFields').style.display='block'; document.getElementById('vCerdoFields').style.display='none'; } else { document.getElementById('vPatosFields').style.display='none'; document.getElementById('vCerdoFields').style.display='block'; } calcTotV(); }
         function calcTotV(){ let o = document.getElementById('vOrigen')?.value, pr = parseFloat(document.getElementById('vPrecio')?.value)||0, kg = 0; if(o==='lote'){ let idx = document.getElementById('vLote')?.value; if(idx==="") return; let l = DB.lotes[idx]; kg = l.especie.includes('Pato') ? (parseFloat(document.getElementById('vKg')?.value)||0) : (parseFloat(document.getElementById('vKgCerdo')?.value)||0); } else if(o==='nevera'){ kg = parseFloat(document.getElementById('vKgNevera')?.value)||0; } let r = document.getElementById('vResumen'); if(kg>0 && pr>0){ r.style.display='block'; r.innerHTML = '💰 S/ ' + (kg*pr).toFixed(2); } else { r.style.display='none'; } }
-        function vender(tipo){ let c = getClienteV(); if(!c) return; let o = document.getElementById('vOrigen')?.value, pr = parseFloat(document.getElementById('vPrecio')?.value); if(!pr) return alert("Precio"); let kg = 0, cb = 0, esp = '', lid = ''; if(o==='lote'){ let idx = document.getElementById('vLote')?.value; if(idx==="") return; let l = DB.lotes[idx]; esp = l.especie; lid = l.id; if(l.especie.includes('Pato')){ cb = parseInt(document.getElementById('vCabezas')?.value)||0; kg = parseFloat(document.getElementById('vKg')?.value)||0; if(!cb||!kg) return; if(cb > l.cantidad) return alert("Solo " + l.cantidad); } else { kg = parseFloat(document.getElementById('vKgCerdo')?.value)||0; if(!kg) return; } } else { kg = parseFloat(document.getElementById('vKgNevera')?.value)||0; if(!kg) return; let ni = document.getElementById('vNevera')?.value; if(ni==="") return; let nc = DB.carneStock[ni]; if(kg > nc.kg) return; esp = nc.especie; lid = nc.lote; } let t = kg * pr; mostrarModal(tipo==='contado'?'Venta Contado':'Venta Credito', c.nombre + '<br>' + kg + ' kg<br><b>TOTAL: S/ ' + t.toFixed(2) + '</b>', () => { let v = { id: (tipo==='contado'?'VC_':'VCR_')+Date.now(), clienteId: c.id, loteId: lid, especie: esp, kg: kg, precio: pr, total: t, fecha: new Date().toISOString().split('T')[0], anulado: false, cabezas: cb }; if(tipo==='contado'){ DB.ventasContado.push(v); } else { DB.ventasCredito.push(v); } if(o==='lote'){ let l = DB.lotes.find(x=>x.id===lid); if(l){ if(l.especie.includes('Pato')) l.cantidad -= cb; else l.cantidad -= Math.ceil(kg/100); if(l.cantidad<=0) DB.lotes = DB.lotes.filter(x=>x.id!==lid); guardarStorage(); } } else { let ni = document.getElementById('vNevera')?.value; let itemN = DB.carneStock[ni]; itemN.kg -= kg; if(itemN.kg<=0.01) DB.carneStock.splice(ni,1); guardarStorage(); } sincronizar(); initVentas(); mostrarTicket(tipo, {cliente: c.nombre, especie: esp, cantidad: cb||kg, cabezas: cb, kg: kg, precio: pr, total: t.toFixed(2)}); }); }
-        function renderUltimasV(){ let div = document.getElementById('ultimasV'); if(!div) return; let todas = [...DB.ventasContado, ...DB.ventasCredito].sort((a,b)=>b.fecha.localeCompare(a.fecha)).slice(0,5); div.innerHTML = !todas.length ? '<p>Sin ventas.</p>' : '<table><thead><tr><th>Fecha</th><th>Total</th></tr></thead><tbody>' + todas.map(v=>'<tr><td>' + v.fecha + '</td><td>S/ ' + v.total.toFixed(2) + '</td></tr>').join('') + '</tbody></table>'; }
+        function vender(tipo){ let c = getClienteV(); if(!c) return; let o = document.getElementById('vOrigen')?.value, pr = parseFloat(document.getElementById('vPrecio')?.value); if(!pr) return alert("Ingresa precio"); let kg = 0, cb = 0, esp = '', lid = ''; if(o==='lote'){ let idx = document.getElementById('vLote')?.value; if(idx==="") return; let l = DB.lotes[idx]; esp = l.especie; lid = l.id; if(l.especie.includes('Pato')){ cb = parseInt(document.getElementById('vCabezas')?.value)||0; kg = parseFloat(document.getElementById('vKg')?.value)||0; if(!cb||!kg) return alert("Ingresa cabezas y peso"); if(cb > l.cantidad) return alert("Solo hay " + l.cantidad + " aves"); } else { kg = parseFloat(document.getElementById('vKgCerdo')?.value)||0; if(!kg) return alert("Ingresa kg"); if(kg > l.cantidad * 100) return alert("No hay suficientes cerdos"); } } else { kg = parseFloat(document.getElementById('vKgNevera')?.value)||0; if(!kg) return alert("Ingresa kg"); let ni = document.getElementById('vNevera')?.value; if(ni==="") return alert("Selecciona una pieza"); let nc = DB.carneStock[ni]; if(kg > nc.kg) return alert("Solo hay " + nc.kg.toFixed(2) + " kg"); esp = nc.especie; lid = nc.lote; } let t = kg * pr; mostrarModal(tipo==='contado'?'Venta Contado':'Venta Crédito', c.nombre + '<br>' + kg + ' kg<br><b>TOTAL: S/ ' + t.toFixed(2) + '</b>', () => { let v = { id: (tipo==='contado'?'VC_':'VCR_')+Date.now(), clienteId: c.id, loteId: lid, especie: esp, kg: kg, precio: pr, total: t, fecha: new Date().toISOString().split('T')[0], anulado: false, cabezas: cb }; if(tipo==='contado'){ DB.ventasContado.push(v); } else { DB.ventasCredito.push(v); } if(o==='lote'){ let l = DB.lotes.find(x=>x.id===lid); if(l){ if(l.especie.includes('Pato')) l.cantidad -= cb; else l.cantidad -= Math.ceil(kg/100); if(l.cantidad<=0) DB.lotes = DB.lotes.filter(x=>x.id!==lid); guardarStorage(); } } else { let ni = document.getElementById('vNevera')?.value; let itemN = DB.carneStock[ni]; itemN.kg -= kg; if(itemN.kg<=0.01) DB.carneStock.splice(ni,1); guardarStorage(); } renderizar(vistaActual); initVentas(); mostrarTicket(tipo, {cliente: c.nombre, especie: esp, cantidad: cb||kg, cabezas: cb, kg: kg, precio: pr, total: t.toFixed(2)}); }); }
+        function renderUltimasV(){ let div = document.getElementById('ultimasV'); if(!div) return; let todas = [...DB.ventasContado, ...DB.ventasCredito].sort((a,b)=>b.fecha.localeCompare(a.fecha)).slice(0,5); div.innerHTML = !todas.length ? '<p>Sin ventas registradas.</p>' : '<table style="width:100%"><thead><tr><th>Fecha</th><th>Total</th></thead><tbody>' + todas.map(v=>'<tr><td>' + v.fecha + '</td><td>S/ ' + v.total.toFixed(2) + '</td></tr>').join('') + '</tbody></table>'; }
         
         // ============ CLIENTES ============
         let cliA = null;
         function buscarClienteA(){ let i = document.getElementById('buscarClienteA'), dd = document.getElementById('dropdownClientesA'), t = (i?.value||'').toLowerCase(); if(!dd) return; let f = DB.clientes.filter(c=>c.nombre.toLowerCase().includes(t)); dd.innerHTML = f.map(c=>'<div onclick="selCliA(\'' + c.id + '\',\'' + c.nombre + '\')">👤 ' + c.nombre + '</div>').join(''); dd.classList.add('show'); }
         function selCliA(id,n){ cliA = {id:id, nombre:n}; document.getElementById('buscarClienteA').value = n; document.getElementById('dropdownClientesA').classList.remove('show'); actAbonoInfo(id); }
-        function actAbonoInfo(cid){ let info = document.getElementById('abonoInfo'); if(!info||!cid){ if(info) info.style.display='none'; return; } let c = DB.clientes.find(x=>x.id===cid); if(!c) return; let tv = DB.ventasCredito.filter(v=>v.clienteId===cid&&!v.anulado).reduce((s,v)=>s+v.total,0), ta = DB.abonos.filter(a=>a.clienteId===cid).reduce((s,a)=>s+a.monto,0); info.style.display='block'; info.innerHTML = '<b>' + c.nombre + '</b><br>🧾 Deuda: S/ ' + tv.toFixed(2) + '<br>💵 Abonado: S/ ' + ta.toFixed(2) + '<br><b>🔴 Pendiente: S/ ' + (tv-ta).toFixed(2) + '</b>'; }
-        function vClientes(){ return '<div class="topbar"><h2>👥 Clientes</h2></div><div class="grid-2"><div class="card"><div class="card-header">💰 Abono</div><div class="cliente-search"><input type="text" id="buscarClienteA" placeholder="Buscar cliente..." oninput="buscarClienteA()" autocomplete="off"><div class="cliente-dropdown" id="dropdownClientesA"></div></div><div id="abonoInfo" style="display:none;"></div><input type="number" id="abonoMonto" placeholder="Monto"><select id="abonoMetodo"><option>Efectivo</option><option>Transferencia</option></select><input type="date" id="abonoFecha"><button class="btn btn-primary" onclick="regAbono()">Registrar</button></div><div class="card"><div class="card-header">📋 Clientes <button class="btn btn-accent btn-sm" onclick="nuevoCliente()">➕</button></div><div id="listaClientesDeuda"></div></div></div>'; }
+        function actAbonoInfo(cid){ let info = document.getElementById('abonoInfo'); if(!info||!cid){ if(info) info.style.display='none'; return; } let c = DB.clientes.find(x=>x.id===cid); if(!c) return; let tv = DB.ventasCredito.filter(v=>v.clienteId===cid&&!v.anulado).reduce((s,v)=>s+v.total,0), ta = DB.abonos.filter(a=>a.clienteId===cid).reduce((s,a)=>s+a.monto,0); info.style.display='block'; info.innerHTML = '<b>' + c.nombre + '</b><br>🧾 Deuda total: S/ ' + tv.toFixed(2) + '<br>💵 Abonado: S/ ' + ta.toFixed(2) + '<br><b>🔴 Pendiente: S/ ' + (tv-ta).toFixed(2) + '</b>'; }
+        function vClientes(){ return '<div class="topbar"><h2>👥 Clientes</h2></div><div class="grid-2"><div class="card"><div class="card-header">💰 Registrar Abono</div><div class="cliente-search"><input type="text" id="buscarClienteA" placeholder="Buscar cliente..." oninput="buscarClienteA()" autocomplete="off"><div class="cliente-dropdown" id="dropdownClientesA"></div></div><div id="abonoInfo" style="display:none; margin-top:10px; padding:10px; background:#f0fff4; border-radius:8px;"></div><input type="number" id="abonoMonto" placeholder="Monto S/"><select id="abonoMetodo"><option>Efectivo</option><option>Transferencia</option><option>Yape/Plin</option></select><input type="date" id="abonoFecha"><button class="btn btn-primary" onclick="regAbono()">Registrar Abono</button></div><div class="card"><div class="card-header">📋 Clientes <button class="btn btn-accent btn-sm" onclick="nuevoCliente()">➕ Nuevo</button></div><div id="listaClientesDeuda"></div></div></div>'; }
         function initClientes(){ let af = document.getElementById('abonoFecha'); if(af) af.valueAsDate = new Date(); renderClientesDeuda(); cliA = null; }
-        function regAbono(){ if(!cliA) return alert("Selecciona cliente"); let m = parseFloat(document.getElementById('abonoMonto')?.value), met = document.getElementById('abonoMetodo')?.value, f = document.getElementById('abonoFecha')?.value; if(!m) return alert("Monto"); let c = DB.clientes.find(x=>x.id===cliA.id); let tv = DB.ventasCredito.filter(v=>v.clienteId===cliA.id&&!v.anulado).reduce((s,v)=>s+v.total,0), ta = DB.abonos.filter(a=>a.clienteId===cliA.id).reduce((s,a)=>s+a.monto,0); let da = Math.max(0,tv-ta), nd = Math.max(0,da-m); mostrarModal('Confirmar Abono', c.nombre + '<br>S/ ' + m.toFixed(2) + '<br>Deuda anterior: S/ ' + da.toFixed(2) + '<br>Nueva: S/ ' + nd.toFixed(2), () => { DB.abonos.push({ id: 'AB_'+Date.now(), clienteId: cliA.id, monto: m, metodo: met, fecha: f||new Date().toISOString().split('T')[0] }); guardarStorage(); document.getElementById('abonoMonto').value = ''; initClientes(); mostrarTicketAbono({ cliente: c.nombre, monto: m, metodo: met, deudaAnterior: da, nuevaDeuda: nd, saldoPendiente: nd }); }); }
-        function renderClientesDeuda(){ let div = document.getElementById('listaClientesDeuda'); if(!div) return; div.innerHTML = DB.clientes.map(c=>{ let tv = DB.ventasCredito.filter(v=>v.clienteId===c.id&&!v.anulado).reduce((s,v)=>s+v.total,0), ta = DB.abonos.filter(a=>a.clienteId===c.id).reduce((s,a)=>s+a.monto,0), s = tv - ta; return '<div style="display:flex;justify-content:space-between;padding:10px;background:#f7fafc;margin-bottom:6px;"><div><b>' + c.nombre + '</b></div><div style="font-weight:700;color:' + (s>0?'#e53e3c':'#38a169') + '">S/ ' + s.toFixed(2) + '</div><button class="btn btn-danger btn-xs" onclick="eliminarCliente(\'' + c.id + '\')">❌</button></div>'; }).join(''); }
-        function nuevoCliente(){ document.getElementById('modalContainer').innerHTML = '<div class="modal-overlay" id="mo"><div class="modal"><h3>➕ Nuevo Cliente</h3><input type="text" id="ncNom" placeholder="Nombre"><input type="text" id="ncTel" placeholder="Telefono"><div class="modal-actions"><button class="btn btn-accent" onclick="cerrarModal()">Cancelar</button><button class="btn btn-primary" id="ncBtn">Crear</button></div></div></div>'; document.getElementById('mo').onclick = function(e){ if(e.target===this) cerrarModal(); }; document.getElementById('ncBtn').onclick = function(){ let n = document.getElementById('ncNom')?.value.trim(); if(!n) return; let id = 'CLI_'+Date.now(); DB.clientes.push({ id, nombre: n, telefono: document.getElementById('ncTel')?.value||'' }); guardarStorage(); cerrarModal(); initClientes(); }; }
-        function eliminarCliente(id){ mostrarModal('Eliminar', '¿Eliminar?', () => { DB.clientes = DB.clientes.filter(x=>x.id!==id); DB.ventasCredito = DB.ventasCredito.filter(v=>v.clienteId!==id); DB.abonos = DB.abonos.filter(a=>a.clienteId!==id); guardarStorage(); initClientes(); }); }
+        function regAbono(){ if(!cliA) return alert("Selecciona un cliente"); let m = parseFloat(document.getElementById('abonoMonto')?.value), met = document.getElementById('abonoMetodo')?.value, f = document.getElementById('abonoFecha')?.value; if(!m) return alert("Ingresa monto"); let c = DB.clientes.find(x=>x.id===cliA.id); let tv = DB.ventasCredito.filter(v=>v.clienteId===cliA.id&&!v.anulado).reduce((s,v)=>s+v.total,0), ta = DB.abonos.filter(a=>a.clienteId===cliA.id).reduce((s,a)=>s+a.monto,0); let da = Math.max(0,tv-ta), nd = Math.max(0,da-m); mostrarModal('Confirmar Abono', c.nombre + '<br>S/ ' + m.toFixed(2) + '<br>Deuda anterior: S/ ' + da.toFixed(2) + '<br>Nueva deuda: S/ ' + nd.toFixed(2), () => { DB.abonos.push({ id: 'AB_'+Date.now(), clienteId: cliA.id, monto: m, metodo: met, fecha: f||new Date().toISOString().split('T')[0] }); guardarStorage(); document.getElementById('abonoMonto').value = ''; renderizar(vistaActual); mostrarTicketAbono({ cliente: c.nombre, monto: m, metodo: met, deudaAnterior: da, nuevaDeuda: nd, saldoPendiente: nd }); }); }
+        function renderClientesDeuda(){ let div = document.getElementById('listaClientesDeuda'); if(!div) return; div.innerHTML = DB.clientes.map(c=>{ let tv = DB.ventasCredito.filter(v=>v.clienteId===c.id&&!v.anulado).reduce((s,v)=>s+v.total,0), ta = DB.abonos.filter(a=>a.clienteId===c.id).reduce((s,a)=>s+a.monto,0), s = tv - ta; return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:#f7fafc;margin-bottom:6px;border-radius:8px;"><div><b>' + c.nombre + '</b>' + (c.telefono?'<br><small>📞 '+c.telefono+'</small>':'') + '</div><div style="font-weight:700;color:' + (s>0?'#e53e3c':'#38a169') + '">S/ ' + s.toFixed(2) + '</div><button class="btn btn-danger btn-xs" onclick="eliminarCliente(\'' + c.id + '\')">❌</button></div>'; }).join(''); }
+        function nuevoCliente(){ document.getElementById('modalContainer').innerHTML = '<div class="modal-overlay" id="mo"><div class="modal"><h3>➕ Nuevo Cliente</h3><input type="text" id="ncNom" placeholder="Nombre"><input type="text" id="ncTel" placeholder="Teléfono"><div class="modal-actions"><button class="btn btn-accent" onclick="cerrarModal()">Cancelar</button><button class="btn btn-primary" id="ncBtn">Crear</button></div></div></div>'; document.getElementById('mo').onclick = function(e){ if(e.target===this) cerrarModal(); }; document.getElementById('ncBtn').onclick = function(){ let n = document.getElementById('ncNom')?.value.trim(); if(!n) return alert("Nombre requerido"); if(DB.clientes.find(c=>c.nombre.toLowerCase()===n.toLowerCase())){ cerrarModal(); return alert("Ya existe un cliente con ese nombre"); } let id = 'CLI_'+Date.now(); DB.clientes.push({ id, nombre: n, telefono: document.getElementById('ncTel')?.value||'' }); guardarStorage(); cerrarModal(); renderizar(vistaActual); mostrarMensaje('Cliente creado'); }; }
+        function eliminarCliente(id){ mostrarModal('Eliminar Cliente', '¿Eliminar cliente y todas sus transacciones?', () => { DB.clientes = DB.clientes.filter(x=>x.id!==id); DB.ventasCredito = DB.ventasCredito.filter(v=>v.clienteId!==id); DB.abonos = DB.abonos.filter(a=>a.clienteId!==id); guardarStorage(); renderizar(vistaActual); }); }
         
         // ============ COMPRAS ============
-        function vCompras(){ return '<div class="topbar"><h2>🛒 Compras</h2></div><div class="grid-2"><div class="card"><div class="card-header">📊 Pedidos Proyectados</div><div id="pedidoIng"></div><div style="background:#1a202c;padding:10px;border-radius:6px;"><h4 style="color:#fbd38d;">🏭 Nucleos</h4><div id="pedidoNuc"></div></div></div><div class="card"><div class="card-header">🛍️ Compra Rapida</div><select id="compraInsumo">' + INSUMOS.map(i=>'<option>' + i + '</option>').join('') + '</select><div class="form-row"><input type="number" id="compraKilos" placeholder="Kilos"><input type="number" id="compraCosto" placeholder="Costo S/"></div><button class="btn btn-accent" onclick="agregarCarrito()">➕ Añadir</button><table><thead><tr><th>Insumo</th><th>Kg</th><th>S/</th><th></th></tr></thead><tbody id="cuerpoCarrito"></tbody></table><button id="btnProcesar" class="btn btn-primary" style="display:none;" onclick="envCarrito()">Guardar</button></div></div>'; }
-        function initCompras(){ actualizarPedidos(); actualizarCarrito(); }
-        function actualizarPedidos(){ let ing = document.getElementById('pedidoIng'), nuc = document.getElementById('pedidoNuc'); if(!DB.lotes.length){ if(ing) ing.innerHTML = '<p>Sin lotes</p>'; return; } let kpf={}; DB.lotes.forEach(l=>{ let sa=semF(l.fechaLlegada), cs=cSemanal(l.especie,sa); if(cs>0){ let f=getFormula(l.especie,sa); kpf[f] = (kpf[f]||0) + l.cantidad*cs; } }); let ingS={}; for(let f in kpf) for(let i in RECETAS[f]){ let c=(RECETAS[f][i]/500)*kpf[f]; if(LISTA_NUCLEOS.includes(i)){ if(nuc) nuc.innerHTML = '<p>Nucleos: ' + c.toFixed(2) + ' kg</p>'; } else ingS[i]=(ingS[i]||0)+c; } let h=''; for(let i in ingS){ let it=DB.stock.find(x=>x.nombre===i); let st=it?parseFloat(it.cantidad)||0:0; let falta=Math.max(0,ingS[i]-st); h+='<div>' + i + ': ' + falta.toFixed(2) + ' kg (stock: ' + st.toFixed(2) + ')</div>'; } if(ing) ing.innerHTML = h || '<p>Stock suficiente</p>'; }
-        let carrito = []; function agregarCarrito(){ let i = document.getElementById('compraInsumo')?.value, k = parseFloat(document.getElementById('compraKilos')?.value), c = parseFloat(document.getElementById('compraCosto')?.value); if(!k||!c) return; carrito.push({ insumo: i, kilos: k, costo: c }); actualizarCarrito(); }
-        function actualizarCarrito(){ let b = document.getElementById('cuerpoCarrito'), bp = document.getElementById('btnProcesar'); if(!b) return; b.innerHTML = carrito.map((x,i)=>'<tr><td>' + x.insumo + '</td><td>' + x.kilos + ' kg</td><td>S/' + x.costo + '</td><td><button onclick="carrito.splice(' + i + ',1); actualizarCarrito();">❌</button></td></tr>').join(''); if(bp) bp.style.display = carrito.length ? 'block' : 'none'; }
-        function envCarrito(){ if(!carrito.length) return; mostrarModal('Confirmar Compra', 'Guardar ' + carrito.length + ' items?', () => { carrito.forEach(item=>{ let e = DB.stock.find(s=>s.nombre === item.insumo); if(e) e.cantidad += item.kilos; else DB.stock.push({ nombre: item.insumo, cantidad: item.kilos }); DB.gastos.unshift({ fecha: new Date().toISOString().split('T')[0], concepto: '🛒 Compra: ' + item.insumo, monto: item.costo }); }); guardarStorage(); carrito = []; actualizarCarrito(); actualizarPedidos(); sincronizar(); mostrarMensaje('Compra guardada'); }); }
+        function vCompras(){ return '<div class="topbar"><h2>🛒 Compras</h2><button class="btn btn-accent btn-sm" onclick="cargarDesdeSheetsSoloLectura()">📁 Cargar desde Sheet</button></div><div class="card"><div class="card-header">➕ Nueva Compra</div><select id="compraInsumo">' + INSUMOS.map(i=>'<option>' + i + '</option>').join('') + '</select><div class="form-row"><input type="number" id="compraKilos" placeholder="Kilos"><input type="number" id="compraCosto" placeholder="Costo S/"></div><button class="btn btn-primary" onclick="agregarCompra()">Registrar Compra</button><div class="card-header" style="margin-top:20px;">📋 Historial de Compras</div><div id="listaCompras"></div></div>'; }
+        function initCompras(){ renderCompras(); }
+        function agregarCompra(){ let i = document.getElementById('compraInsumo')?.value, k = parseFloat(document.getElementById('compraKilos')?.value), c = parseFloat(document.getElementById('compraCosto')?.value); if(!k||!c) return alert("Completa todos los campos"); let e = DB.stock.find(s=>s.nombre === i); if(e) e.cantidad += k; else DB.stock.push({ nombre: i, cantidad: k }); DB.gastos.unshift({ fecha: new Date().toISOString().split('T')[0], concepto: "🛒 Compra: " + i + " (" + k + " kg)", monto: c }); guardarStorage(); document.getElementById('compraKilos').value = ''; document.getElementById('compraCosto').value = ''; renderizar(vistaActual); mostrarMensaje('Compra registrada'); }
+        function renderCompras(){ let div = document.getElementById('listaCompras'); if(!div) return; let compras = DB.gastos.filter(g => g.concepto.includes('Compra:')).slice(0,20); div.innerHTML = compras.length ? compras.map(g=>'<div style="padding:8px; border-bottom:1px solid #ddd;">' + g.fecha + ' - ' + g.concepto + ' - S/ ' + g.monto.toFixed(2) + '</div>').join('') : '<p>Sin compras registradas</p>'; }
         
         // ============ PREPARAR ============
-        function vPreparar(){ return '<div class="topbar"><h2>🥣 Mezcladora</h2></div><div class="card"><select id="prepFormula"><option value="">-- Formula --</option>' + Object.keys(RECETAS).map(f=>'<option>' + f + '</option>').join('') + '</select><input type="number" id="prepKilos" placeholder="Kilos a preparar" oninput="mostrarReceta()"><input type="date" id="prepFecha"><div id="cajaReceta" style="display:none;"><ul id="listaReceta"></ul></div><button class="btn btn-primary" onclick="regPreparar()">🥣 Preparar</button></div>'; }
-        function mostrarReceta(){ let f = document.getElementById('prepFormula')?.value, k = parseFloat(document.getElementById('prepKilos')?.value), c = document.getElementById('cajaReceta'), l = document.getElementById('listaReceta'); if(!f||!k){ if(c) c.style.display='none'; return; } if(c) c.style.display='block'; if(l) l.innerHTML = Object.entries(RECETAS[f]).map(([ing,v])=>'<li><b>' + ((v/500)*k).toFixed(2) + ' kg</b> - ' + ing + '</li>').join(''); }
-        function regPreparar(){ let f = document.getElementById('prepFormula')?.value, k = parseFloat(document.getElementById('prepKilos')?.value), fecha = document.getElementById('prepFecha')?.value || new Date().toISOString().split('T')[0]; if(!f||!k) return; mostrarModal('Confirmar', f + ': ' + k + ' kg', () => { let receta = RECETAS[f]; for(let ing in receta){ let cant = -((receta[ing]/500)*k); let item = DB.stock.find(s=>s.nombre === ing); if(item) item.cantidad += cant; else DB.stock.push({ nombre: ing, cantidad: cant }); } let ak = "🥣 " + f; let ae = DB.stock.find(s=>s.nombre === ak); if(ae) ae.cantidad += k; else DB.stock.push({ nombre: ak, cantidad: k }); guardarStorage(); sincronizar(); mostrarMensaje(k + ' kg de ' + f + ' preparados'); }); }
+        function vPreparar(){ return '<div class="topbar"><h2>🥣 Mezcladora</h2></div><div class="card"><select id="prepFormula"><option value="">-- Selecciona Fórmula --</option>' + Object.keys(RECETAS).map(f=>'<option>' + f + '</option>').join('') + '</select><input type="number" id="prepKilos" placeholder="Kilos a preparar" oninput="mostrarReceta()"><input type="date" id="prepFecha"><div id="cajaReceta" style="display:none; margin-top:15px; padding:10px; background:#f0fff4; border-radius:8px;"><ul id="listaReceta"></ul></div><button class="btn btn-primary" onclick="regPreparar()">🥣 Preparar Alimento</button></div>'; }
+        function mostrarReceta(){ let f = document.getElementById('prepFormula')?.value, k = parseFloat(document.getElementById('prepKilos')?.value), c = document.getElementById('cajaReceta'), l = document.getElementById('listaReceta'); if(!f||!k){ if(c) c.style.display='none'; return; } if(c) c.style.display='block'; if(l) l.innerHTML = Object.entries(RECETAS[f]).map(([ing,v])=>'<li><b>' + ((v/500)*k).toFixed(2) + ' kg</b> - ' + ing + '</li>').join('') + '<li><b style="color:#27ae60;">➕ +' + k + ' kg de ' + f + ' al stock</b></li>'; }
+        function regPreparar(){ let f = document.getElementById('prepFormula')?.value, k = parseFloat(document.getElementById('prepKilos')?.value), fecha = document.getElementById('prepFecha')?.value || new Date().toISOString().split('T')[0]; if(!f||!k) return alert("Selecciona fórmula y kilos"); mostrarModal('Confirmar Preparación', '<b>' + f + '</b><br>' + k + ' kg<br>Fecha: ' + fecha, () => { let receta = RECETAS[f]; for(let ing in receta){ let cant = -((receta[ing]/500)*k); let item = DB.stock.find(s=>s.nombre === ing); if(item) item.cantidad += cant; else DB.stock.push({ nombre: ing, cantidad: cant }); } let ak = "🥣 " + f; let ae = DB.stock.find(s=>s.nombre === ak); if(ae) ae.cantidad += k; else DB.stock.push({ nombre: ak, cantidad: k }); guardarStorage(); renderizar(vistaActual); mostrarMensaje(k + ' kg de ' + f + ' preparados'); }); }
         
         // ============ GASTOS ============
-        function vGastos(){ return '<div class="topbar"><h2>💸 Gastos</h2></div><div class="grid-2"><div class="card"><select id="gastoConcepto"><option>Vacuna</option><option>Medicina</option><option>Jornal</option><option>Otros</option></select><input type="text" id="gastoDetalle" placeholder="Detalle"><input type="number" id="gastoMonto" placeholder="Monto S/"><input type="date" id="gastoFecha"><button class="btn btn-primary" onclick="regGasto()">Registrar</button></div><div class="card"><div class="card-header">Ultimos</div><div id="listaGastos"></div></div></div>'; }
+        function vGastos(){ return '<div class="topbar"><h2>💸 Gastos</h2></div><div class="grid-2"><div class="card"><div class="card-header">➕ Nuevo Gasto</div><select id="gastoConcepto"><option>Vacuna</option><option>Medicina</option><option>Jornal</option><option>Transporte</option><option>Servicios</option><option>Otros</option></select><input type="text" id="gastoDetalle" placeholder="Detalle"><input type="number" id="gastoMonto" placeholder="Monto S/"><input type="date" id="gastoFecha"><button class="btn btn-primary" onclick="regGasto()">Registrar Gasto</button></div><div class="card"><div class="card-header">📋 Últimos Gastos</div><div id="listaGastos"></div></div></div>'; }
         function initGastos(){ let gf = document.getElementById('gastoFecha'); if(gf) gf.valueAsDate = new Date(); renderGastos(); }
-        function regGasto(){ let c = document.getElementById('gastoConcepto')?.value, d = document.getElementById('gastoDetalle')?.value.trim(), m = parseFloat(document.getElementById('gastoMonto')?.value), f = document.getElementById('gastoFecha')?.value; if(!m) return; let g = { fecha: f||new Date().toISOString().split('T')[0], concepto: d ? c+" - "+d : c, monto: m }; mostrarModal('Confirmar', g.concepto + '<br>S/ ' + m, () => { DB.gastos.unshift(g); guardarStorage(); sincronizar(); }); }
-        function renderGastos(){ let div = document.getElementById('listaGastos'); if(!div) return; div.innerHTML = DB.gastos.slice(0,20).map(g=>'<div>' + g.fecha + ' - ' + g.concepto + ': S/ ' + g.monto.toFixed(2) + '</div>').join(''); }
+        function regGasto(){ let c = document.getElementById('gastoConcepto')?.value, d = document.getElementById('gastoDetalle')?.value.trim(), m = parseFloat(document.getElementById('gastoMonto')?.value), f = document.getElementById('gastoFecha')?.value; if(!m) return alert("Ingresa monto"); let g = { fecha: f||new Date().toISOString().split('T')[0], concepto: d ? c+" - "+d : c, monto: m }; mostrarModal('Confirmar Gasto', g.concepto + '<br>S/ ' + m.toFixed(2), () => { DB.gastos.unshift(g); guardarStorage(); renderizar(vistaActual); mostrarMensaje('Gasto registrado'); }); }
+        function renderGastos(){ let div = document.getElementById('listaGastos'); if(!div) return; div.innerHTML = DB.gastos.slice(0,20).map(g=>'<div style="padding:8px 0; border-bottom:1px solid #ddd;">' + g.fecha + ' - ' + g.concepto + ': S/ ' + g.monto.toFixed(2) + '</div>').join('') || '<p>Sin gastos registrados</p>'; }
         
         // ============ MORTALIDAD ============
-        function vMortalidad(){ return '<div class="topbar"><h2>💀 Mortalidad</h2></div><div class="card"><select id="mortLote"><option value="">-- Lote --</option>' + DB.lotes.map((l,i)=>'<option value="' + i + '">' + l.id + ' (' + l.cantidad + ')</option>').join('') + '</select><input type="number" id="mortCant" placeholder="Cantidad"><select id="mortCausa"><option>Enfermedad</option><option>Accidente</option></select><input type="date" id="mortFecha"><button class="btn btn-danger" onclick="regMortalidad()">Registrar</button></div>'; }
-        function initMortalidad(){ let mf = document.getElementById('mortFecha'); if(mf) mf.valueAsDate = new Date(); }
-        function regMortalidad(){ let idx = document.getElementById('mortLote')?.value, cant = parseInt(document.getElementById('mortCant')?.value), causa = document.getElementById('mortCausa')?.value, fecha = document.getElementById('mortFecha')?.value; if(idx===""||!cant) return; let l = DB.lotes[idx]; if(cant > l.cantidad) return; mostrarModal('Confirmar', 'Baja de ' + cant + ' ' + l.especie, () => { DB.mortalidad.push({ id: 'MORT_'+Date.now(), loteId: l.id, cantidad: cant, causa: causa, fecha: fecha||new Date().toISOString().split('T')[0] }); l.cantidad -= cant; if(l.cantidad<=0) DB.lotes.splice(idx,1); guardarStorage(); sincronizar(); }); }
+        function vMortalidad(){ return '<div class="topbar"><h2>💀 Mortalidad</h2></div><div class="card"><select id="mortLote"><option value="">-- Selecciona Lote --</option>' + DB.lotes.map((l,i)=>'<option value="' + i + '">' + l.id + ' (' + l.cantidad + ' ' + l.especie + ')</option>').join('') + '</select><input type="number" id="mortCant" placeholder="Cantidad"><select id="mortCausa"><option>Enfermedad</option><option>Accidente</option><option>Selección</option><option>Desconocida</option></select><input type="text" id="mortDetalle" placeholder="Detalle (opcional)"><input type="date" id="mortFecha"><button class="btn btn-danger" onclick="regMortalidad()">Registrar Mortalidad</button><div class="card-header" style="margin-top:20px;">📋 Historial</div><div id="listaMortalidad"></div></div>'; }
+        function initMortalidad(){ let mf = document.getElementById('mortFecha'); if(mf) mf.valueAsDate = new Date(); renderMortalidad(); }
+        function regMortalidad(){ let idx = document.getElementById('mortLote')?.value, cant = parseInt(document.getElementById('mortCant')?.value), causa = document.getElementById('mortCausa')?.value, detalle = document.getElementById('mortDetalle')?.value.trim(), fecha = document.getElementById('mortFecha')?.value; if(idx===""||!cant) return alert("Selecciona lote y cantidad"); let l = DB.lotes[idx]; if(cant > l.cantidad) return alert("Solo hay " + l.cantidad + " animales"); mostrarModal('Confirmar Mortalidad', l.id + '<br>' + cant + ' ' + l.especie + '<br>Causa: ' + causa, () => { DB.mortalidad.push({ id: 'MORT_'+Date.now(), loteId: l.id, especie: l.especie, cantidad: cant, causa: causa, detalle: detalle, fecha: fecha||new Date().toISOString().split('T')[0] }); l.cantidad -= cant; if(l.cantidad<=0) DB.lotes.splice(idx,1); guardarStorage(); renderizar(vistaActual); mostrarMensaje('Mortalidad registrada'); }); }
+        function renderMortalidad(){ let div = document.getElementById('listaMortalidad'); if(!div) return; div.innerHTML = DB.mortalidad.slice(0,20).map(m=>'<div style="padding:8px; border-bottom:1px solid #ddd;">' + m.fecha + ' - ' + m.loteId + ': ' + m.cantidad + ' ' + m.especie + ' (' + m.causa + ')</div>').join('') || '<p>Sin registros</p>'; }
         
         // ============ NEVERA ============
-        function vNevera(){ let nevera = DB.carneStock || []; let totalKg = nevera.reduce((s,c)=>s+c.kg,0); let h = '<div class="kpi-row"><div class="kpi-card kpi-blue"><div class="kpi-val">' + nevera.length + '</div><div class="kpi-lbl">Piezas</div></div><div class="kpi-card kpi-blue"><div class="kpi-val">' + totalKg.toFixed(1) + ' kg</div><div class="kpi-lbl">Total</div></div></div>'; nevera.forEach((c,i)=>{ h += '<div class="card"><div><b>' + c.especie + '</b> - ' + c.kg.toFixed(2) + ' kg (' + (c.lote||'sin lote') + ')</div><button class="btn btn-danger btn-xs" onclick="devolverNevera(' + i + ')">↩️ Devolver</button></div>'; }); return '<div class="topbar"><h2>🥩 Nevera</h2></div>' + h; }
-        function devolverNevera(idx){ let item = DB.carneStock[idx]; if(!item) return; mostrarModal('Devolver', 'Devolver ' + item.kg.toFixed(2) + ' kg?', () => { let lote = DB.lotes.find(l=>l.id===item.lote); if(lote) lote.cantidad += 1; else DB.lotes.push({ id: item.lote, especie: 'Cerdos', cantidad: 1, fechaLlegada: new Date().toISOString().split('T')[0] }); DB.carneStock.splice(idx,1); guardarStorage(); sincronizar(); }); }
+        function vNevera(){ let nevera = DB.carneStock || []; let totalKg = nevera.reduce((s,c)=>s+c.kg,0); let h = '<div class="topbar"><h2>🥩 Nevera</h2><button class="btn btn-accent btn-sm" onclick="agregarANevera()">➕ Agregar Carne</button></div><div class="kpi-row"><div class="kpi-card kpi-blue"><div class="kpi-val">' + nevera.length + '</div><div class="kpi-lbl">Piezas</div></div><div class="kpi-card kpi-blue"><div class="kpi-val">' + totalKg.toFixed(1) + ' kg</div><div class="kpi-lbl">Total</div></div></div>'; if(nevera.length===0) h += '<div class="card"><p>Nevera vacía.</p></div>'; else { nevera.forEach((c,i)=>{ h += '<div class="card"><div><b>' + c.especie + '</b> - ' + c.kg.toFixed(2) + ' kg' + (c.lote ? ' (' + c.lote + ')' : '') + '</div><button class="btn btn-danger btn-xs" onclick="devolverNevera(' + i + ')">↩️ Devolver a Lote</button></div>'; }); } return h; }
+        function agregarANevera(){ let l = DB.lotes.find(l => l.especie === "Cerdos" && l.cantidad > 0); if(!l) return alert("No hay cerdos disponibles"); let kg = parseFloat(prompt("Peso en kg:", "100")); if(!kg) return; let id = 'NEV_'+Date.now(); DB.carneStock.push({ id: id, especie: "Cerdo", kg: kg, lote: l.id, fecha: new Date().toISOString().split('T')[0] }); l.cantidad -= 1; guardarStorage(); renderizar(vistaActual); mostrarMensaje('Carne agregada a nevera'); }
+        function devolverNevera(idx){ let item = DB.carneStock[idx]; if(!item) return; mostrarModal('Devolver a Lote', 'Devolver ' + item.kg.toFixed(2) + ' kg al lote ' + item.lote + '?', () => { let lote = DB.lotes.find(l=>l.id===item.lote); if(lote) lote.cantidad += 1; else DB.lotes.push({ id: item.lote, especie: "Cerdos", cantidad: 1, fechaLlegada: new Date().toISOString().split('T')[0] }); DB.carneStock.splice(idx,1); guardarStorage(); renderizar(vistaActual); mostrarMensaje('Carne devuelta al lote'); }); }
         
         // ============ TICKETS ============
-        function vTickets(){ return '<div class="topbar"><h2>🧾 Tickets</h2></div><div class="card"><div class="filter-row"><input type="text" id="tktBuscar" placeholder="Buscar..." oninput="renderTickets()"><input type="date" id="tktDesde" onchange="renderTickets()"><input type="date" id="tktHasta" onchange="renderTickets()"></div><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Total</th><th>Tipo</th><th></th></thead><tbody id="tktTabla"></tbody></table></div>'; }
+        function vTickets(){ return '<div class="topbar"><h2>🧾 Tickets</h2></div><div class="card"><div class="filter-row"><input type="text" id="tktBuscar" placeholder="🔍 Buscar..." oninput="renderTickets()"><input type="date" id="tktDesde" onchange="renderTickets()"><input type="date" id="tktHasta" onchange="renderTickets()"></div><table style="width:100%"><thead><tr><th>Fecha</th><th>Cliente</th><th>Total</th><th>Tipo</th><th></th></tr></thead><tbody id="tktTabla"></tbody></table></div>'; }
         function initTickets(){ let th = document.getElementById('tktHasta'); if(th) th.valueAsDate = new Date(); renderTickets(); }
         function renderTickets(){ let todas = [...DB.ventasContado.map(v=>({...v, tipo:'contado'})), ...DB.ventasCredito.map(v=>({...v, tipo:'credito'})), ...DB.abonos.map(a=>({id:a.id, fecha:a.fecha, clienteId:a.clienteId, total:a.monto, tipo:'abono'}))]; let tb = document.getElementById('tktTabla'); if(tb) tb.innerHTML = todas.slice(0,50).map(v=>{ let c = DB.clientes.find(x=>x.id===v.clienteId); return '<tr><td>' + v.fecha + '</td><td>' + (c?c.nombre:'?') + '</td><td>S/ ' + v.total.toFixed(2) + '</td><td>' + v.tipo + '</td><td><button class="btn btn-accent btn-xs" onclick="verTicket(\'' + v.id + '\',\'' + v.tipo + '\')">🧾</button></td></tr>'; }).join(''); }
         function verTicket(id, tipo){ if(tipo==='abono'){ let a = DB.abonos.find(x=>x.id===id); if(a){ let c = DB.clientes.find(x=>x.id===a.clienteId); if(c) mostrarTicketAbono({ cliente: c.nombre, monto: a.monto, metodo: a.metodo||'Efectivo', deudaAnterior: 0, nuevaDeuda: 0, saldoPendiente: 0 }); } } else { let v = tipo==='contado'?DB.ventasContado.find(x=>x.id===id):DB.ventasCredito.find(x=>x.id===id); if(v){ let c = DB.clientes.find(x=>x.id===v.clienteId); mostrarTicket(tipo, { cliente: c?c.nombre:'?', especie: v.especie, cantidad: v.kg, kg: v.kg, precio: v.precio, total: v.total.toFixed(2) }); } } }
         
-        document.addEventListener('click', function(e){ let dv = document.getElementById('dropdownClientesV'), da = document.getElementById('dropdownClientesA'); if(dv && !dv.contains(e.target) && !document.getElementById('buscarClienteV')?.contains(e.target)) dv.classList.remove('show'); if(da && !da.contains(e.target) && !document.getElementById('buscarClienteA')?.contains(e.target)) da.classList.remove('show'); });
+        // Evento para cerrar dropdowns
+        document.addEventListener('click', function(e){ 
+            let dv = document.getElementById('dropdownClientesV'), da = document.getElementById('dropdownClientesA');
+            if(dv && !dv.contains(e.target) && !document.getElementById('buscarClienteV')?.contains(e.target)) dv.classList.remove('show');
+            if(da && !da.contains(e.target) && !document.getElementById('buscarClienteA')?.contains(e.target)) da.classList.remove('show');
+        });
     </script>
 </body>
 </html>
