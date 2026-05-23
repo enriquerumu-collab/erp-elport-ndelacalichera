@@ -909,58 +909,145 @@ function renderProyeccion() {
     const div = document.getElementById('proyeccionCompras');
     if (!div) return;
     if (!DB.lotes.length) { div.innerHTML = '<p style="color:#718096">Sin lotes activos</p>'; return; }
-    const necesidad = {};
+
+    // Calcular necesidad de insumos BASE para 14 días
+    const necesidadBase = {};
+    // Calcular necesidad de NÚCLEOS para toda la campaña restante
+    const necesidadNucleos = {};
+
     DB.lotes.forEach(l => {
+        const diaActual = diaF(l.fechaLlegada);
+        // 14 días para insumos base
         for (let dia = 0; dia < 14; dia++) {
-            const semFutura = Math.floor((diaF(l.fechaLlegada) + dia) / 7) + 1;
+            const semFutura = Math.floor((diaActual + dia - 1) / 7) + 1;
             const formula = getFormula(l.especie, semFutura);
-            const consumoDia = l.cantidad * (cDiario(l)||0);
-            if (formula === 'Corimicyn') {
-                necesidad['Corimicyn'] = (necesidad['Corimicyn']||0) + consumoDia;
-            } else {
-                const receta = getRecetas()[formula]||{};
+            const consumoDia = l.cantidad * (cDiario(l) || 0);
+            if (formula !== 'Corimicyn') {
+                const receta = getRecetas()[formula] || {};
                 for (const ing in receta) {
-                    necesidad[ing] = (necesidad[ing]||0) + (receta[ing]/500)*consumoDia;
+                    if (!NUCLEOS.includes(ing) && !NUCLEOS.includes('Nucleo '+ing)) {
+                        necesidadBase[ing] = (necesidadBase[ing] || 0) + (receta[ing] / 500) * consumoDia;
+                    }
+                }
+            } else {
+                necesidadBase['Corimicyn'] = (necesidadBase['Corimicyn'] || 0) + consumoDia;
+            }
+        }
+
+        // Núcleos: calcular para toda la campaña restante (hasta semana 14 para patos, 14 para cerdos)
+        const semMax = (l.especie || '').toLowerCase().includes('pato') ? 14 : 14;
+        for (let sem = semF(l.fechaLlegada); sem <= semMax; sem++) {
+            const formula = getFormula(l.especie, sem);
+            if (formula === 'Corimicyn') continue;
+            const receta = getRecetas()[formula] || {};
+            // Días restantes en esta semana
+            const diasEnSem = 7;
+            const consumoSem = l.cantidad * (DB.curva.find(c => c.semana == sem) ?
+                ((l.especie||'').toLowerCase().includes('pato') ?
+                    (l.sexo === 'M' ? DB.curva.find(c=>c.semana==sem).patoMacho :
+                     l.sexo === 'H' ? DB.curva.find(c=>c.semana==sem).patoHembra :
+                     (DB.curva.find(c=>c.semana==sem).patoMacho + DB.curva.find(c=>c.semana==sem).patoHembra) / 2) :
+                    DB.curva.find(c=>c.semana==sem).cerdo) : 0);
+            for (const ing in receta) {
+                if (NUCLEOS.includes(ing)) {
+                    necesidadNucleos[ing] = (necesidadNucleos[ing] || 0) + (receta[ing] / 500) * consumoSem;
                 }
             }
         }
     });
 
-    const necesitaComprar = [];
-    for (const ing in necesidad) {
-        if (NUCLEOS_CERDO.includes(ing) && !hayCerdos()) continue;
-        if (NUCLEOS_PATO.includes(ing) && !hayPatos()) continue;
-        const stockActual = getStock(ing);
-        const faltante = necesidad[ing] - stockActual;
-        if (faltante > 0) necesitaComprar.push({ing, faltante, stockActual, necesario:necesidad[ing]});
-    }
+    let html = '<div style="font-size:12px;color:#718096;margin-bottom:12px">Proyección a 14 días — todos los lotes</div>';
 
-    let html = '';
-    if (!necesitaComprar.length) {
-        html = '<div class="alerta-ok alerta-item">✅ Stock suficiente para 14 días</div>';
+    // ===== SECCIÓN MOLINO =====
+    const faltaMolino = INSUMOS_MOLINO.filter(ing => {
+        const stock = getStock(ing);
+        return (necesidadBase[ing] || 0) > stock;
+    }).map(ing => ({
+        ing,
+        faltante: (necesidadBase[ing] || 0) - getStock(ing),
+        stock: getStock(ing),
+        necesario: necesidadBase[ing] || 0
+    }));
+
+    if (faltaMolino.length) {
+        html += `<div style="background:#fff3e0;border-radius:10px;padding:14px;margin-bottom:14px;border-left:4px solid #e67e22">
+            <div style="font-weight:700;font-size:14px;margin-bottom:8px">🏭 Molino <small style="font-weight:400;color:#718096">(cualquier día excepto domingo)</small></div>`;
+        faltaMolino.forEach(x => {
+            html += `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #ffe0b2;font-size:13px">
+                <span>🔴 <b>${x.ing}</b></span>
+                <span>faltan <b>${x.faltante.toFixed(1)} kg</b> <small style="color:#718096">(stock: ${x.stock.toFixed(1)})</small></span>
+            </div>`;
+        });
+        html += '</div>';
     } else {
-        const molino = necesitaComprar.filter(x=>INSUMOS_MOLINO.includes(x.ing));
-        const montana = necesitaComprar.filter(x=>NUCLEOS.includes(x.ing));
-        const otros = necesitaComprar.filter(x=>!INSUMOS_MOLINO.includes(x.ing)&&!NUCLEOS.includes(x.ing));
-
-        if (molino.length) {
-            html += `<div style="font-weight:700;margin:10px 0 6px">🏭 Molino (cualquier día excepto domingo)</div>`;
-            molino.forEach(x => { html += `<div class="proyeccion-critica proyeccion-item">🔴 <b>${x.ing}</b>: faltan ${x.faltante.toFixed(1)} kg<br><small>Stock: ${x.stockActual.toFixed(1)} kg | Necesario: ${x.necesario.toFixed(1)} kg</small></div>`; });
-        }
-        if (montana.length) {
-            const totalSacos = montana.reduce((s,x)=>s+Math.ceil(x.faltante/(NUCLEOS_KG[x.ing]||10)),0);
-            html += `<div style="font-weight:700;margin:10px 0 6px">🏔️ Montana (pedir lunes, llega martes)</div>`;
-            if (totalSacos < 6) html += `<div class="alerta-warning alerta-item">⚠️ Solo ${totalSacos} sacos — pide mínimo 6 para envío gratis</div>`;
-            montana.forEach(x => {
-                const sacos = Math.ceil(x.faltante/(NUCLEOS_KG[x.ing]||10));
-                html += `<div class="proyeccion-critica proyeccion-item">🔴 <b>${x.ing}</b>: ${sacos} saco(s)<br><small>Stock: ${x.stockActual.toFixed(1)} kg | Faltan: ${x.faltante.toFixed(1)} kg</small></div>`;
-            });
-        }
-        if (otros.length) {
-            html += `<div style="font-weight:700;margin:10px 0 6px">📦 Otros</div>`;
-            otros.forEach(x => { html += `<div class="proyeccion-item">🟡 <b>${x.ing}</b>: faltan ${x.faltante.toFixed(1)} kg</div>`; });
-        }
+        html += `<div class="alerta-ok alerta-item" style="margin-bottom:12px">✅ Molino: stock suficiente 14 días</div>`;
     }
+
+    // ===== SECCIÓN MONTANA - NÚCLEOS =====
+    // Calcular sacos necesarios por núcleo para toda la campaña
+    const nucleosInfo = [];
+    let totalSacosNecesarios = 0;
+
+    NUCLEOS.forEach(ing => {
+        // Solo mostrar si es relevante para animales actuales
+        if (NUCLEOS_CERDO.includes(ing) && !hayCerdos()) return;
+        if (NUCLEOS_PATO.includes(ing) && !hayPatos()) return;
+
+        const stockActual = getStock(ing);
+        const necesarioTotal = necesidadNucleos[ing] || 0;
+        const faltante = Math.max(0, necesarioTotal - stockActual);
+        const kgPorSaco = NUCLEOS_KG[ing] || 10;
+        const sacosNecesarios = Math.ceil(faltante / kgPorSaco);
+        const sacosStock = Math.floor(stockActual / kgPorSaco);
+
+        if (necesarioTotal > 0) {
+            nucleosInfo.push({ ing, stockActual, necesarioTotal, faltante, sacosNecesarios, sacosStock, kgPorSaco });
+            totalSacosNecesarios += sacosNecesarios;
+        }
+    });
+
+    html += `<div style="background:#e8f4fd;border-radius:10px;padding:14px;margin-bottom:14px;border-left:4px solid #3498db">
+        <div style="font-weight:700;font-size:14px;margin-bottom:4px">🏔️ Montana — Núcleos <small style="font-weight:400;color:#718096">(pedir lunes, llega martes)</small></div>`;
+
+    if (totalSacosNecesarios === 0) {
+        html += `<div style="color:#27ae60;font-size:13px;margin:8px 0">✅ Stock de núcleos suficiente para toda la campaña</div>`;
+    } else {
+        // Alerta de mínimo 6 sacos
+        if (totalSacosNecesarios < 6) {
+            const sacosFaltanParaGratis = 6 - totalSacosNecesarios;
+            html += `<div style="background:#fff3cd;border-radius:6px;padding:8px 12px;margin:8px 0;font-size:13px;border-left:3px solid #f0ad4e">
+                ⚠️ Solo necesitas <b>${totalSacosNecesarios} saco(s)</b> pero el envío gratis requiere mínimo 6.<br>
+                💡 <b>Recomendación:</b> pide ${sacosFaltanParaGratis} saco(s) extra para reserva según próximas etapas.
+            </div>`;
+            // Sugerir qué núcleos pedir de más
+            const sugerencias = nucleosInfo.filter(n => n.sacosNecesarios > 0).sort((a,b) => b.necesarioTotal - a.necesarioTotal);
+            if (sugerencias.length > 0) {
+                html += `<div style="font-size:12px;color:#718096;margin-bottom:6px">Sugerencia para completar 6 sacos:</div>`;
+            }
+        }
+
+        nucleosInfo.forEach(n => {
+            const color = n.faltante > 0 ? '#e74c3c' : '#27ae60';
+            const icono = n.faltante > 0 ? '🔴' : '✅';
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #bee3f8;font-size:13px">
+                <div>${icono} <b>${n.ing}</b><br>
+                <small style="color:#718096">Stock: ${n.stockActual.toFixed(1)} kg (${n.sacosStock} sacos) | Campaña necesita: ${n.necesarioTotal.toFixed(1)} kg</small></div>
+                <div style="text-align:right;color:${color};font-weight:700">${n.sacosNecesarios > 0 ? n.sacosNecesarios+' saco(s)' : 'OK'}</div>
+            </div>`;
+        });
+    }
+
+    html += `<div style="font-size:12px;color:#3498db;margin-top:8px;font-weight:600">
+        📦 Total sacos a pedir: ${totalSacosNecesarios} ${totalSacosNecesarios < 6 && totalSacosNecesarios > 0 ? '→ completa hasta 6 para envío gratis' : totalSacosNecesarios >= 6 ? '✅ Envío gratis' : ''}
+    </div>`;
+    html += '</div>';
+
+    // Corimicyn si hace falta
+    if ((necesidadBase['Corimicyn'] || 0) > getStock('Corimicyn')) {
+        const faltante = (necesidadBase['Corimicyn'] || 0) - getStock('Corimicyn');
+        html += `<div class="proyeccion-critica proyeccion-item">🔴 <b>Corimicyn</b>: faltan ${faltante.toFixed(2)} kg<br><small>Stock: ${getStock('Corimicyn').toFixed(2)} kg</small></div>`;
+    }
+
     div.innerHTML = html;
 }
 
