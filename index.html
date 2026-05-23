@@ -1137,14 +1137,6 @@ function renderProyeccion() {
         html += `<div class="alerta-ok alerta-item" style="margin-bottom:12px">✅ Molino: stock suficiente 14 días</div>`;
     }
 
-    // ===== SECCIÓN MONTANA - NÚCLEOS (próximas 2 semanas) =====
-    const nucleosInfo = [];
-    let totalSacosNecesarios = 0;
-
-    // Calcular necesidad de núcleos solo para 14 días
-    const necesidadNucleos14 = {};
-    DB.lotes.forEach(l => {
-        const diaActual = diaF(l.fechaLlegada);
     // ===== SECCIÓN MONTANA - NÚCLEOS =====
     const nucleosInfo = [];
     let totalSacosNecesarios = 0;
