@@ -188,8 +188,17 @@ function normalizarFecha(valor) {
         const p = s.split('/');
         return p[2] + '-' + p[1].padStart(2,'0') + '-' + p[0].padStart(2,'0');
     }
-    // Formato con hora (ISO completo)
+    // Formato con hora ISO (2026-05-09T00:00:00)
     if (s.includes('T')) return s.split('T')[0];
+    // Formato texto largo JS: "Sat May 09 2026 00:00:00 GM..." o "Thu May 21 2026..."
+    const mesesEn = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+    const matchLargo = s.match(/\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})/);
+    if (matchLargo) {
+        const mes = mesesEn[matchLargo[1]] || '01';
+        const dia = matchLargo[2].padStart(2,'0');
+        const anio = matchLargo[3];
+        return `${anio}-${mes}-${dia}`;
+    }
     // Número serial de Google Sheets (días desde 30/12/1899)
     if (/^\d+(\.\d+)?$/.test(s)) {
         const n = parseFloat(s);
@@ -199,6 +208,17 @@ function normalizarFecha(valor) {
         }
     }
     return s;
+}
+
+// Normalizar todas las fechas del DB al cargar desde localStorage
+function normalizarFechasDB() {
+    DB.lotes = DB.lotes.map(l => ({...l, fechaLlegada: normalizarFecha(l.fechaLlegada)}));
+    DB.gastos = DB.gastos.map(g => ({...g, fecha: normalizarFecha(g.fecha)}));
+    DB.ventasCredito = DB.ventasCredito.map(v => ({...v, fecha: normalizarFecha(v.fecha)}));
+    DB.ventasContado = DB.ventasContado.map(v => ({...v, fecha: normalizarFecha(v.fecha)}));
+    DB.abonos = DB.abonos.map(a => ({...a, fecha: normalizarFecha(a.fecha)}));
+    DB.mortalidad = DB.mortalidad.map(m => ({...m, fecha: normalizarFecha(m.fecha)}));
+    DB.carneStock = (DB.carneStock||[]).map(c => ({...c, fecha: normalizarFecha(c.fecha)}));
 }
 
 function hoy() { return new Date().toISOString().split('T')[0]; }
@@ -249,13 +269,19 @@ function cDiario(lote) {
 
 function cDiarioTotal(lote) { return lote.cantidad * cDiario(lote); }
 
-// FIX #2: buscar stock tanto con emoji como sin él
+// Busca stock de un insumo o alimento preparado
+// El sheet guarda "Pato Inicio" en col G sin emoji, pero el ERP local lo guarda como "🥣 Pato Inicio"
 function getStock(nombre) {
-    // Busca con emoji primero, luego sin
-    const con = DB.stock.find(s => s.nombre === ('🥣 ' + nombre));
-    if (con) return Math.max(0, parseFloat(con.cantidad)||0);
-    const sin = DB.stock.find(s => s.nombre === nombre);
-    if (sin) return Math.max(0, parseFloat(sin.cantidad)||0);
+    // Busca exacto primero
+    let s = DB.stock.find(x => x.nombre === nombre);
+    if (s) return Math.max(0, parseFloat(s.cantidad)||0);
+    // Busca con emoji
+    s = DB.stock.find(x => x.nombre === ('🥣 ' + nombre));
+    if (s) return Math.max(0, parseFloat(s.cantidad)||0);
+    // Busca sin emoji (si le pasaron con emoji)
+    const sinEmoji = nombre.replace('🥣 ','');
+    s = DB.stock.find(x => x.nombre === sinEmoji);
+    if (s) return Math.max(0, parseFloat(s.cantidad)||0);
     return 0;
 }
 
@@ -348,7 +374,11 @@ function guardarLocal() {
 function cargarLocal() {
     try {
         const saved = localStorage.getItem('erp_v6_db');
-        if (saved) { Object.assign(DB, JSON.parse(saved)); return true; }
+        if (saved) {
+            Object.assign(DB, JSON.parse(saved));
+            normalizarFechasDB(); // siempre normalizar al cargar
+            return true;
+        }
     } catch(e) {}
     return false;
 }
@@ -363,9 +393,9 @@ function cerrarModal() { document.getElementById('modalContainer').innerHTML = '
 
 window.onload = () => {
     document.getElementById('sidebarFecha').innerText = new Date().toLocaleDateString('es-PE', {weekday:'long',day:'numeric',month:'long'});
-    cargarLocal();
+    cargarLocal(); // ya normaliza fechas internamente
     renderizar(vistaActual);
-    setTimeout(sincronizar, 500);
+    setTimeout(sincronizar, 800);
 };
 
 function navegar(view, el) {
@@ -469,12 +499,13 @@ function vDashboard() {
     DB.stock.forEach(s => {
         const c = parseFloat(s.cantidad)||0;
         const nom = s.nombre||'';
+        // No mostrar alimentos preparados
+        if (nom.startsWith('🥣')) return;
         // Filtrar núcleos de cerdo si no hay cerdos
+        if (NUCLEOS_CERDO.some(n => nom.includes(n.replace('Nucleo ','').replace('Núcleo ',''))) && !hayCerdos()) return;
         if (NUCLEOS_CERDO.includes(nom) && !hayCerdos()) return;
         // Filtrar núcleos de pato si no hay patos
         if (NUCLEOS_PATO.includes(nom) && !hayPatos()) return;
-        // No mostrar alimentos preparados (🥣)
-        if (nom.startsWith('🥣')) return;
 
         if (c <= 0) {
             alertasHTML += `<div class="alerta-item alerta-critica">🔴 <b>${nom}</b> AGOTADO</div>`;
