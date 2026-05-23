@@ -142,7 +142,7 @@
 <div id="modalContainer"></div>
 
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbxjqxx-H9F-gPCMHdH0SvtvmlgWYxcwDSpHLUy5DxOFtlLmSmEYqCnR7jJWEpTZF7Js/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbzm9or93ny50pRrvSyZsKm8ZjqwClSQ1xDYZXl-3E4dxoo4KFJMcamH8NAsonpnRAbBJA/exec';
 
 let DB = {
     lotes: [], curva: [], protocolos: [], stock: [],
@@ -189,12 +189,16 @@ function normalizarFecha(valor) {
         return p[2] + '-' + p[1].padStart(2,'0') + '-' + p[0].padStart(2,'0');
     }
     // Formato con hora ISO (2026-05-09T00:00:00)
-    if (s.includes('T')) return s.split('T')[0];
-    // Formato texto largo JS: "Sat May 09 2026 00:00:00 GM..." o "Thu May 21 2026..."
-    const mesesEn = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
-    const matchLargo = s.match(/\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})/);
+    if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.split('T')[0];
+    // Formato texto largo JS con timezone:
+    // "Thu May 21 2026 00:00:00 GMT-0500 (hora estándar de Perú)"
+    // "Sat May 09 2026 00:00:00 GM"
+    // Buscar patrón: mes abreviado + día + año
+    const mesesEn = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
+                     Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+    const matchLargo = s.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(\d{4})\b/);
     if (matchLargo) {
-        const mes = mesesEn[matchLargo[1]] || '01';
+        const mes = mesesEn[matchLargo[1]];
         const dia = matchLargo[2].padStart(2,'0');
         const anio = matchLargo[3];
         return `${anio}-${mes}-${dia}`;
