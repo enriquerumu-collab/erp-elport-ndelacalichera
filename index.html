@@ -557,7 +557,9 @@ function initDashboard() {
 
 // ============ FINANZAS ============
 function vFinanzas() {
-    const primerDiaMes = hoy().substring(0,7) + '-01';
+    const hoyStr = hoy();
+    const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
+    const hace30Str = hace30.toISOString().split('T')[0];
     return `${topbarHTML('📈 Finanzas')}
     <div class="tab-bar">
         <div class="tab active" onclick="tabFinanzas('resumen',this)">📊 Resumen</div>
@@ -566,8 +568,8 @@ function vFinanzas() {
     </div>
     <div class="card" style="margin-bottom:16px;">
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
-            <div><label>Desde</label><input type="date" id="finDesde" value="${primerDiaMes}" onchange="initFinanzas()" style="width:160px;margin:0"></div>
-            <div><label>Hasta</label><input type="date" id="finHasta" value="${hoy()}" onchange="initFinanzas()" style="width:160px;margin:0"></div>
+            <div><label>Desde</label><input type="date" id="finDesde" value="${hace30Str}" onchange="initFinanzas()" style="width:160px;margin:0"></div>
+            <div><label>Hasta</label><input type="date" id="finHasta" value="${hoyStr}" onchange="initFinanzas()" style="width:160px;margin:0"></div>
         </div>
     </div>
     <div id="finanzasContent"></div>`;
@@ -627,30 +629,88 @@ function initFinanzas() {
             </div>
         </div>`;
     } else if (tab === 'gastosvsingresos') {
-        cont.innerHTML = `<div class="card"><div class="card-header">📉 Gastos vs Ingresos por mes</div><div class="chart-container"><canvas id="chartFinanzas"></canvas></div></div>`;
+        // Agrupar por día para curva más detallada
+        cont.innerHTML = `<div class="card"><div class="card-header">📉 Gastos vs Ingresos</div><div class="chart-container" style="height:320px"><canvas id="chartFinanzas"></canvas></div></div>`;
         setTimeout(() => {
-            const meses = {};
+            const dias = {};
             ventas.forEach(v => {
-                const m = (v.fecha||'').substring(0,7);
-                if (!meses[m]) meses[m] = {ingresos:0,gastos:0};
-                meses[m].ingresos += v.total;
+                const d = (v.fecha||'').substring(0,10);
+                if (!d) return;
+                if (!dias[d]) dias[d] = {ingresos:0,gastos:0};
+                dias[d].ingresos += v.total;
             });
             gastosF.forEach(g => {
-                const m = (g.fecha||'').substring(0,7);
-                if (!meses[m]) meses[m] = {ingresos:0,gastos:0};
-                meses[m].gastos += parseFloat(g.monto)||0;
+                const d = (g.fecha||'').substring(0,10);
+                if (!d) return;
+                if (!dias[d]) dias[d] = {ingresos:0,gastos:0};
+                dias[d].gastos += parseFloat(g.monto)||0;
             });
-            const labels = Object.keys(meses).sort();
-            const ingresos = labels.map(l => meses[l].ingresos);
-            const gastos = labels.map(l => meses[l].gastos);
-            const ganancias = labels.map((_,i) => ingresos[i] - gastos[i]);
+            const labels = Object.keys(dias).sort();
+            const ingresos = labels.map(l => dias[l].ingresos);
+            const gastos = labels.map(l => dias[l].gastos);
+            // Ganancia acumulada
+            let acum = 0;
+            const gananciaAcum = labels.map((l,i) => { acum += ingresos[i] - gastos[i]; return acum; });
             const ctx = document.getElementById('chartFinanzas');
             if (ctx && labels.length) {
-                new Chart(ctx, { type:'bar', data:{ labels, datasets:[
-                    {label:'Ingresos',data:ingresos,backgroundColor:'#27ae60'},
-                    {label:'Gastos',data:gastos,backgroundColor:'#e74c3c'},
-                    {label:'Ganancia',data:ganancias,type:'line',borderColor:'#3498db',backgroundColor:'transparent',tension:0.3}
-                ]}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}});
+                new Chart(ctx, {
+                    data: {
+                        labels,
+                        datasets: [
+                            {
+                                type: 'line',
+                                label: 'Ingresos',
+                                data: ingresos,
+                                borderColor: '#27ae60',
+                                backgroundColor: 'rgba(39,174,96,0.08)',
+                                fill: true,
+                                tension: 0.4,
+                                pointRadius: 4,
+                                pointHoverRadius: 7
+                            },
+                            {
+                                type: 'line',
+                                label: 'Gastos',
+                                data: gastos,
+                                borderColor: '#e74c3c',
+                                backgroundColor: 'rgba(231,76,60,0.08)',
+                                fill: true,
+                                tension: 0.4,
+                                pointRadius: 4,
+                                pointHoverRadius: 7
+                            },
+                            {
+                                type: 'line',
+                                label: 'Ganancia acumulada',
+                                data: gananciaAcum,
+                                borderColor: '#3498db',
+                                backgroundColor: 'transparent',
+                                tension: 0.4,
+                                borderDash: [5,5],
+                                pointRadius: 3,
+                                pointHoverRadius: 6
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { position: 'bottom' },
+                            tooltip: {
+                                callbacks: {
+                                    label: ctx => `${ctx.dataset.label}: S/ ${ctx.parsed.y.toFixed(2)}`
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                ticks: { callback: v => 'S/ '+v }
+                            }
+                        }
+                    }
+                });
             } else if (ctx) {
                 ctx.parentElement.innerHTML = '<p style="color:#718096;padding:20px">Sin datos para el período seleccionado</p>';
             }
@@ -987,62 +1047,74 @@ function renderProyeccion() {
         html += `<div class="alerta-ok alerta-item" style="margin-bottom:12px">✅ Molino: stock suficiente 14 días</div>`;
     }
 
-    // ===== SECCIÓN MONTANA - NÚCLEOS =====
-    // Calcular sacos necesarios por núcleo para toda la campaña
+    // ===== SECCIÓN MONTANA - NÚCLEOS (próximas 2 semanas) =====
     const nucleosInfo = [];
     let totalSacosNecesarios = 0;
 
+    // Calcular necesidad de núcleos solo para 14 días
+    const necesidadNucleos14 = {};
+    DB.lotes.forEach(l => {
+        const diaActual = diaF(l.fechaLlegada);
+        for (let dia = 0; dia < 14; dia++) {
+            const semFutura = Math.floor((diaActual + dia - 1) / 7) + 1;
+            const formula = getFormula(l.especie, semFutura);
+            if (formula === 'Corimicyn') continue;
+            const consumoDia = l.cantidad * (cDiario(l) || 0);
+            const receta = getRecetas()[formula] || {};
+            for (const ing in receta) {
+                if (NUCLEOS.includes(ing) || NUCLEOS.some(n => n.replace('Nucleo ','Núcleo ') === ing)) {
+                    const clave = ing;
+                    necesidadNucleos14[clave] = (necesidadNucleos14[clave] || 0) + (receta[ing] / 500) * consumoDia;
+                }
+            }
+        }
+    });
+
     NUCLEOS.forEach(ing => {
-        // Solo mostrar si es relevante para animales actuales
         if (NUCLEOS_CERDO.includes(ing) && !hayCerdos()) return;
         if (NUCLEOS_PATO.includes(ing) && !hayPatos()) return;
-
-        const stockActual = getStock(ing);
-        const necesarioTotal = necesidadNucleos[ing] || 0;
-        const faltante = Math.max(0, necesarioTotal - stockActual);
+        // Buscar también con tilde
+        const ingTilde = ing.replace('Nucleo ','Núcleo ');
+        const necesario14 = (necesidadNucleos14[ing] || 0) + (necesidadNucleos14[ingTilde] || 0);
+        const stockActual = getStock(ing) || getStock(ingTilde);
+        const faltante = Math.max(0, necesario14 - stockActual);
         const kgPorSaco = NUCLEOS_KG[ing] || 10;
-        const sacosNecesarios = Math.ceil(faltante / kgPorSaco);
+        const sacosNecesarios = faltante > 0 ? Math.ceil(faltante / kgPorSaco) : 0;
         const sacosStock = Math.floor(stockActual / kgPorSaco);
-
-        if (necesarioTotal > 0) {
-            nucleosInfo.push({ ing, stockActual, necesarioTotal, faltante, sacosNecesarios, sacosStock, kgPorSaco });
-            totalSacosNecesarios += sacosNecesarios;
-        }
+        // Mostrar siempre los núcleos relevantes aunque tengan stock suficiente
+        nucleosInfo.push({ ing, stockActual, necesario14, faltante, sacosNecesarios, sacosStock, kgPorSaco });
+        totalSacosNecesarios += sacosNecesarios;
     });
 
     html += `<div style="background:#e8f4fd;border-radius:10px;padding:14px;margin-bottom:14px;border-left:4px solid #3498db">
         <div style="font-weight:700;font-size:14px;margin-bottom:4px">🏔️ Montana — Núcleos <small style="font-weight:400;color:#718096">(pedir lunes, llega martes)</small></div>`;
 
     if (totalSacosNecesarios === 0) {
-        html += `<div style="color:#27ae60;font-size:13px;margin:8px 0">✅ Stock de núcleos suficiente para toda la campaña</div>`;
+        html += `<div style="color:#27ae60;font-size:13px;margin:8px 0">✅ Stock suficiente para las próximas 2 semanas</div>`;
     } else {
-        // Alerta de mínimo 6 sacos
         if (totalSacosNecesarios < 6) {
             const sacosFaltanParaGratis = 6 - totalSacosNecesarios;
             html += `<div style="background:#fff3cd;border-radius:6px;padding:8px 12px;margin:8px 0;font-size:13px;border-left:3px solid #f0ad4e">
-                ⚠️ Solo necesitas <b>${totalSacosNecesarios} saco(s)</b> pero el envío gratis requiere mínimo 6.<br>
-                💡 <b>Recomendación:</b> pide ${sacosFaltanParaGratis} saco(s) extra para reserva según próximas etapas.
+                ⚠️ Necesitas <b>${totalSacosNecesarios} saco(s)</b> — pide mínimo 6 para envío gratis.<br>
+                💡 Pide <b>${sacosFaltanParaGratis} saco(s) extra</b> del núcleo que más usarás próximamente.
             </div>`;
-            // Sugerir qué núcleos pedir de más
-            const sugerencias = nucleosInfo.filter(n => n.sacosNecesarios > 0).sort((a,b) => b.necesarioTotal - a.necesarioTotal);
-            if (sugerencias.length > 0) {
-                html += `<div style="font-size:12px;color:#718096;margin-bottom:6px">Sugerencia para completar 6 sacos:</div>`;
-            }
         }
-
-        nucleosInfo.forEach(n => {
-            const color = n.faltante > 0 ? '#e74c3c' : '#27ae60';
-            const icono = n.faltante > 0 ? '🔴' : '✅';
-            html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #bee3f8;font-size:13px">
-                <div>${icono} <b>${n.ing}</b><br>
-                <small style="color:#718096">Stock: ${n.stockActual.toFixed(1)} kg (${n.sacosStock} sacos) | Campaña necesita: ${n.necesarioTotal.toFixed(1)} kg</small></div>
-                <div style="text-align:right;color:${color};font-weight:700">${n.sacosNecesarios > 0 ? n.sacosNecesarios+' saco(s)' : 'OK'}</div>
-            </div>`;
-        });
     }
 
+    nucleosInfo.forEach(n => {
+        if (NUCLEOS_CERDO.includes(n.ing) && !hayCerdos()) return;
+        if (NUCLEOS_PATO.includes(n.ing) && !hayPatos()) return;
+        const color = n.faltante > 0 ? '#e74c3c' : '#27ae60';
+        const icono = n.faltante > 0 ? '🔴' : '✅';
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #bee3f8;font-size:13px">
+            <div>${icono} <b>${n.ing}</b><br>
+            <small style="color:#718096">Stock: ${n.stockActual.toFixed(1)} kg (${n.sacosStock} sacos) | 14 días necesita: ${n.necesario14.toFixed(1)} kg</small></div>
+            <div style="text-align:right;color:${color};font-weight:700">${n.sacosNecesarios > 0 ? n.sacosNecesarios+' saco(s)' : 'OK'}</div>
+        </div>`;
+    });
+
     html += `<div style="font-size:12px;color:#3498db;margin-top:8px;font-weight:600">
-        📦 Total sacos a pedir: ${totalSacosNecesarios} ${totalSacosNecesarios < 6 && totalSacosNecesarios > 0 ? '→ completa hasta 6 para envío gratis' : totalSacosNecesarios >= 6 ? '✅ Envío gratis' : ''}
+        📦 Total sacos a pedir: ${totalSacosNecesarios} ${totalSacosNecesarios >= 6 ? '✅ Envío gratis' : totalSacosNecesarios > 0 ? '→ completa hasta 6 para envío gratis' : ''}
     </div>`;
     html += '</div>';
 
@@ -1058,9 +1130,9 @@ function renderProyeccion() {
 function renderHistorialCompras() {
     const div = document.getElementById('historialCompras');
     if (!div) return;
-    const compras = DB.gastos.filter(g=>g.concepto&&g.concepto.includes('Compra:')).slice(0,20);
+    const compras = DB.gastos.filter(g => g.concepto && g.concepto.includes('Compra:')).slice(0,20);
     div.innerHTML = compras.length ? `<table><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>
-        ${compras.map(g=>`<tr><td>${g.fecha}</td><td>${g.concepto}</td><td>S/ ${(parseFloat(g.monto)||0).toFixed(2)}</td></tr>`).join('')}
+        ${compras.map(g=>`<tr><td>${normalizarFecha(g.fecha)}</td><td>${g.concepto}</td><td>S/ ${(parseFloat(g.monto)||0).toFixed(2)}</td></tr>`).join('')}
         </tbody></table>` : '<p style="color:#718096">Sin compras. Sincroniza.</p>';
 }
 
@@ -1194,14 +1266,32 @@ function vVentas() {
             </div>
             <label>Precio x kg S/</label><input type="number" id="vPrecio" oninput="calcTotV()">
             <label>Fecha</label><input type="date" id="vFecha">
+            <div id="vMetodoPagoDiv" style="display:none">
+                <label>Método de pago</label>
+                <select id="vMetodoPago">
+                    <option value="Efectivo">💵 Efectivo</option>
+                    <option value="Transferencia">🏦 Transferencia</option>
+                    <option value="Yape/Plin">📱 Yape/Plin</option>
+                </select>
+            </div>
             <div id="vResumen" style="display:none;background:#f0fff4;padding:12px;border-radius:8px;font-size:22px;font-weight:700;text-align:center;margin-bottom:10px"></div>
             <div class="form-row">
-                <button class="btn btn-primary" onclick="vender('contado')">💰 Contado</button>
+                <button class="btn btn-primary" onclick="mostrarMetodoPago('contado')">💰 Contado</button>
                 <button class="btn btn-warning" onclick="vender('credito')">💳 Crédito</button>
             </div>
         </div>
         <div class="card"><div class="card-header">📋 Últimas Ventas</div><div id="ultimasV"></div></div>
     </div>`;
+}
+
+function mostrarMetodoPago(tipo) {
+    if (tipo === 'contado') {
+        const div = document.getElementById('vMetodoPagoDiv');
+        if (div) div.style.display = 'block';
+        document.getElementById('vMetodoPago')?.focus();
+        // Cambiar botón contado a confirmar
+        vender('contado');
+    }
 }
 
 function initVentas() {
@@ -1248,29 +1338,33 @@ function calcTotV() {
     if(kg>0&&pr>0&&r){r.style.display='block';r.innerHTML=`💰 S/ ${(kg*pr).toFixed(2)}`;}else if(r) r.style.display='none';
 }
 async function vender(tipo) {
-    if(!cliV) return mostrarMensaje('Selecciona un cliente','error');
-    const idx=document.getElementById('vLote')?.value; if(idx===''||idx===undefined) return mostrarMensaje('Selecciona lote','error');
-    const l=DB.lotes[parseInt(idx)]; if(!l) return;
-    const pr=parseFloat(document.getElementById('vPrecio')?.value); if(!pr) return mostrarMensaje('Ingresa precio','error');
-    const fecha=document.getElementById('vFecha')?.value||hoy();
-    const esP=(l.especie||'').toLowerCase().includes('pato');
-    const cb=esP?parseInt(document.getElementById('vCabezas')?.value)||0:0;
-    const kg=esP?parseFloat(document.getElementById('vKg')?.value)||0:parseFloat(document.getElementById('vKgCerdo')?.value)||0;
-    if(esP&&(!cb||!kg)) return mostrarMensaje('Ingresa cabezas y peso','error');
-    if(!esP&&!kg) return mostrarMensaje('Ingresa kg','error');
-    if(esP&&cb>l.cantidad) return mostrarMensaje(`Solo hay ${l.cantidad} aves`,'error');
-    const total=kg*pr; const c=DB.clientes.find(x=>x.id===cliV.id);
-    mostrarModal(tipo==='contado'?'💰 Contado':'💳 Crédito',`<b>${c?.nombre}</b><br>${esP?cb+' cabezas / ':''}${kg} kg<br><b>S/ ${total.toFixed(2)}</b>`, async ()=>{
-        const v={id:(tipo==='contado'?'VC_':'VCR_')+Date.now(),clienteId:cliV.id,loteId:l.id,especie:l.especie,cabezas:cb,kg,precio:pr,total,fecha,tipo,anulado:false};
-        if(tipo==='contado') DB.ventasContado.push(v); else DB.ventasCredito.push(v);
-        if(esP) l.cantidad-=cb; else l.cantidad-=Math.max(1,Math.floor(kg/100));
-        if(l.cantidad<=0) DB.lotes=DB.lotes.filter(x=>x.id!==l.id);
-        guardarLocal();
-        const res=await enviarAlSheet('guardarVenta',v);
-        if(!res.success) PENDIENTES.push({accion:'guardarVenta',datos:v});
-        mostrarTicket(tipo,{cliente:c?.nombre||'?',especie:l.especie,cabezas:cb,kg,precio:pr,total:total.toFixed(2),fecha});
-        renderizar(vistaActual);
-    });
+    if (!cliV) return mostrarMensaje('Selecciona un cliente', 'error');
+    const idx = document.getElementById('vLote')?.value;
+    if (idx===''||idx===undefined) return mostrarMensaje('Selecciona lote', 'error');
+    const l = DB.lotes[parseInt(idx)]; if(!l) return;
+    const pr = parseFloat(document.getElementById('vPrecio')?.value); if(!pr) return mostrarMensaje('Ingresa precio', 'error');
+    const fecha = document.getElementById('vFecha')?.value||hoy();
+    const metodoPago = tipo === 'contado' ? (document.getElementById('vMetodoPago')?.value || 'Efectivo') : 'Crédito';
+    const esP = (l.especie||'').toLowerCase().includes('pato');
+    const cb = esP ? parseInt(document.getElementById('vCabezas')?.value)||0 : 0;
+    const kg = esP ? parseFloat(document.getElementById('vKg')?.value)||0 : parseFloat(document.getElementById('vKgCerdo')?.value)||0;
+    if (esP&&(!cb||!kg)) return mostrarMensaje('Ingresa cabezas y peso', 'error');
+    if (!esP&&!kg) return mostrarMensaje('Ingresa kg', 'error');
+    if (esP&&cb>l.cantidad) return mostrarMensaje(`Solo hay ${l.cantidad} aves`, 'error');
+    const total = kg*pr; const c = DB.clientes.find(x=>x.id===cliV.id);
+    mostrarModal(tipo==='contado'?'💰 Contado':'💳 Crédito',
+        `<b>${c?.nombre}</b><br>${esP?cb+' cabezas / ':''}${kg} kg<br>Método: <b>${metodoPago}</b><br><b style="font-size:18px">Total: S/ ${total.toFixed(2)}</b>`,
+        async () => {
+            const v = {id:(tipo==='contado'?'VC_':'VCR_')+Date.now(), clienteId:cliV.id, loteId:l.id, especie:l.especie, cabezas:cb, kg, precio:pr, total, fecha, tipo, metodoPago, anulado:false};
+            if(tipo==='contado') DB.ventasContado.push(v); else DB.ventasCredito.push(v);
+            if(esP) l.cantidad-=cb; else l.cantidad-=Math.max(1,Math.floor(kg/100));
+            if(l.cantidad<=0) DB.lotes=DB.lotes.filter(x=>x.id!==l.id);
+            guardarLocal();
+            const res = await enviarAlSheet('guardarVenta', v);
+            if(!res.success) PENDIENTES.push({accion:'guardarVenta', datos:v});
+            mostrarTicket(tipo, {cliente:c?.nombre||'?', especie:l.especie, cabezas:cb, kg, precio:pr, total:total.toFixed(2), fecha, metodoPago});
+            renderizar(vistaActual);
+        });
 }
 function renderUltimasV() {
     const div=document.getElementById('ultimasV'); if(!div) return;
@@ -1342,7 +1436,7 @@ function initTickets(){const th=document.getElementById('tktHasta');if(th)th.val
 function renderTickets(){const buscar=(document.getElementById('tktBuscar')?.value||'').toLowerCase(),desde=document.getElementById('tktDesde')?.value||'',hasta=document.getElementById('tktHasta')?.value||'9999-12-31';const todas=[...DB.ventasContado.map(v=>({...v,tipo:'contado'})),...DB.ventasCredito.map(v=>({...v,tipo:'credito'})),...DB.abonos.map(a=>({id:a.id,fecha:a.fecha,clienteId:a.clienteId,total:a.monto,tipo:'abono'}))].filter(v=>{if(desde&&v.fecha<desde)return false;if(v.fecha>hasta)return false;if(buscar){const c=DB.clientes.find(x=>x.id===v.clienteId);return c?.nombre.toLowerCase().includes(buscar);}return true;}).sort((a,b)=>b.fecha.localeCompare(a.fecha));const tb=document.getElementById('tktTabla');if(tb)tb.innerHTML=todas.slice(0,50).map(v=>{const c=DB.clientes.find(x=>x.id===v.clienteId);return`<tr><td>${v.fecha}</td><td>${c?.nombre||'?'}</td><td>S/ ${v.total.toFixed(2)}</td><td><span class="badge ${v.tipo==='contado'?'badge-green':v.tipo==='credito'?'badge-orange':'badge-blue'}">${v.tipo}</span></td><td><button class="btn btn-accent btn-xs" onclick="verTicket('${v.id}','${v.tipo}')">🧾</button></td></tr>`;}).join('')||'<tr><td colspan="5" style="text-align:center;color:#718096">Sin registros</td></tr>';}
 function verTicket(id,tipo){if(tipo==='abono'){const a=DB.abonos.find(x=>x.id===id);if(a){const c=DB.clientes.find(x=>x.id===a.clienteId);mostrarTicketAbono({cliente:c?.nombre||'?',monto:a.monto,metodo:a.metodo||'Efectivo',deudaAnterior:0,nuevaDeuda:0,saldoPendiente:0});}}else{const v=tipo==='contado'?DB.ventasContado.find(x=>x.id===id):DB.ventasCredito.find(x=>x.id===id);if(v){const c=DB.clientes.find(x=>x.id===v.clienteId);mostrarTicket(tipo,{cliente:c?.nombre||'?',especie:v.especie,cabezas:v.cabezas,kg:v.kg,precio:v.precio,total:v.total.toFixed(2),fecha:v.fecha});}}}
 
-function mostrarTicket(tipo,d){const html=`<div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:10px;margin-bottom:10px"><h2 style="font-family:monospace">🌾 El Porton de la Calichera 🌽</h2><p style="font-family:monospace">997 884 114 — TICKET ${tipo.toUpperCase()}</p><p style="font-family:monospace">${d.fecha||hoy()}</p></div><p style="font-family:monospace"><b>Cliente:</b> ${d.cliente}</p><p style="font-family:monospace"><b>${d.especie}</b></p>${d.cabezas?`<p style="font-family:monospace">Cabezas: ${d.cabezas}</p>`:''}<p style="font-family:monospace">Peso: ${d.kg} kg</p><p style="font-family:monospace">Precio: S/ ${parseFloat(d.precio).toFixed(2)}/kg</p><p style="font-family:monospace;font-size:20px;font-weight:700;text-align:right;border-top:2px solid #000;padding-top:8px;margin-top:8px">TOTAL: S/ ${d.total}</p><p style="font-family:monospace;text-align:center">${tipo==='contado'?'✅ PAGADO':'⏳ PENDIENTE'}</p>`;document.getElementById('modalContainer').innerHTML=`<div class="modal-overlay" id="mo"><div class="modal" style="max-width:480px"><h3>🧾 Ticket</h3><div id="ticketContent" style="border:1px solid #ddd;padding:16px;border-radius:8px">${html}</div><div class="modal-actions"><button class="btn btn-whatsapp" onclick="compartirTicket()">💬 WhatsApp</button><button class="btn btn-accent" onclick="window.print()">🖨️</button><button class="btn btn-primary" onclick="cerrarModal()">Cerrar</button></div></div></div>`;document.getElementById('mo').onclick=e=>{if(e.target.id==='mo')cerrarModal();};}
+function mostrarTicket(tipo,d){const html=`<div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:10px;margin-bottom:10px"><h2 style="font-family:monospace">🌾 El Porton de la Calichera 🌽</h2><p style="font-family:monospace">997 884 114 — TICKET ${tipo.toUpperCase()}</p><p style="font-family:monospace">${d.fecha||hoy()}</p></div><p style="font-family:monospace"><b>Cliente:</b> ${d.cliente}</p><p style="font-family:monospace"><b>${d.especie}</b></p>${d.cabezas?`<p style="font-family:monospace">Cabezas: ${d.cabezas}</p>`:''}<p style="font-family:monospace">Peso: ${d.kg} kg</p><p style="font-family:monospace">Precio: S/ ${parseFloat(d.precio).toFixed(2)}/kg</p>${d.metodoPago?`<p style="font-family:monospace">Método: ${d.metodoPago}</p>`:''}<p style="font-family:monospace;font-size:20px;font-weight:700;text-align:right;border-top:2px solid #000;padding-top:8px;margin-top:8px">TOTAL: S/ ${d.total}</p><p style="font-family:monospace;text-align:center">${tipo==='contado'?'✅ PAGADO':'⏳ PENDIENTE'}</p>`;document.getElementById('modalContainer').innerHTML=`<div class="modal-overlay" id="mo"><div class="modal" style="max-width:480px"><h3>🧾 Ticket</h3><div id="ticketContent" style="border:1px solid #ddd;padding:16px;border-radius:8px">${html}</div><div class="modal-actions"><button class="btn btn-whatsapp" onclick="compartirTicket()">💬 WhatsApp</button><button class="btn btn-accent" onclick="window.print()">🖨️</button><button class="btn btn-primary" onclick="cerrarModal()">Cerrar</button></div></div></div>`;document.getElementById('mo').onclick=e=>{if(e.target.id==='mo')cerrarModal();};}
 function mostrarTicketAbono(d){const html=`<div style="text-align:center;font-family:monospace"><h2>🌾 El Porton de la Calichera 🌽</h2><p>997 884 114 — ABONO — ${hoy()}</p><hr><p><b>Cliente:</b> ${d.cliente}</p><p>Abono: <b>S/ ${parseFloat(d.monto).toFixed(2)}</b> — ${d.metodo}</p><p style="font-weight:700;font-size:18px">Pendiente: S/ ${parseFloat(d.saldoPendiente).toFixed(2)}</p></div>`;document.getElementById('modalContainer').innerHTML=`<div class="modal-overlay" id="mo"><div class="modal" style="max-width:480px"><h3>💳 Abono</h3><div id="ticketContent" style="border:1px solid #ddd;padding:16px;border-radius:8px">${html}</div><div class="modal-actions"><button class="btn btn-whatsapp" onclick="compartirTicket()">💬</button><button class="btn btn-primary" onclick="cerrarModal()">Cerrar</button></div></div></div>`;document.getElementById('mo').onclick=e=>{if(e.target.id==='mo')cerrarModal();};}
 async function compartirTicket(){const cont=document.getElementById('ticketContent');if(!cont)return;try{const canvas=await html2canvas(cont,{backgroundColor:'#ffffff',scale:2});const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));const file=new File([blob],'ticket.png',{type:'image/png'});if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'Ticket El Portón'});}else{const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='ticket.png';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}catch(e){window.open('https://wa.me/','_blank');}}
 
