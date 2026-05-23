@@ -142,7 +142,7 @@
 <div id="modalContainer"></div>
 
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbzgI9xpoj4ax1InO4R0jHSMISu-cCS-T4qw3nF4-btMf6REoz4GWkFSexU7NwLXwrGFEA/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbz_uMUSw-IqUKyVlh4oqS45rr9U30GRyzYgcKKuPWWTriP2-ovGFVLUebbgoyUgp1Up/exec';
 
 let DB = {
     lotes: [], curva: [], protocolos: [], stock: [],
@@ -864,8 +864,8 @@ async function confirmarEditarLote(id) {
 
     // Actualizar gasto si se ingresó nuevo costo
     if (nuevoCosto > 0) {
-        const g = { id:'G_'+Date.now(), fecha: hoy(), concepto:`✏️ Ajuste costo: ${l.especie} (${id}) — ${nuevaCant} animales`, monto: nuevoCosto };
-        DB.gastos.unshift(g);
+        const g = { fecha: hoy(), concepto:`✏️ Ajuste: ${l.especie} (${id}) — ${nuevaCant} animales`, monto: nuevoCosto };
+        DB.gastos.unshift({id:'G_'+Date.now(), ...g});
         await enviarAlSheet('guardarGasto', g);
     }
 
@@ -891,12 +891,12 @@ async function regLote() {
     mostrarModal('Registrar Lote', `<b>${id}</b><br>${esp}: ${cant} animales<br>Fecha: ${fecha}<br>Costo: S/ ${costo}`, async () => {
         const lote = {id, especie:esp, cantidad:cant, fechaLlegada:fecha, loteOrigen:'', sexo:''};
         DB.lotes.push(lote);
+        // Guardar gasto solo localmente — el Apps Script lo guarda en el Sheet
         if (costo > 0) {
-            const g = { fecha, concepto: `🐾 Compra: ${esp} (${id})`, monto: costo };
-            DB.gastos.unshift({id:'G_'+Date.now(), ...g});
-            await enviarAlSheet('guardarGasto', g);
+            DB.gastos.unshift({id:'G_'+Date.now(), fecha, concepto:`🐾 Compra: ${esp} (${id})`, monto:costo});
         }
         guardarLocal();
+        // guardarLote en el Sheet incluye el gasto y COMPRAS Y ALMACÉN automáticamente
         const res = await enviarAlSheet('guardarLote', {...lote, costo});
         if (!res.success) PENDIENTES.push({accion:'guardarLote', datos:{...lote, costo}});
         mostrarMensaje(res.success ? '✅ Lote registrado' : '⚠️ Guardado local. Sincroniza.', res.success?'ok':'info');
@@ -905,14 +905,6 @@ async function regLote() {
 }
 
 async function anularLoteUI(id) {
-    mostrarModal('Desactivar Lote', `¿Marcar <b>${id}</b> como inactivo?`, async () => {
-        DB.lotes = DB.lotes.filter(l=>l.id!==id);
-        guardarLocal();
-        await enviarAlSheet('anularLote', {id});
-        renderizar(vistaActual);
-        mostrarMensaje('Lote desactivado');
-    }, 'Desactivar');
-}
 
 function abrirSexado(loteId) {
     const lote = DB.lotes.find(l=>l.id===loteId);
