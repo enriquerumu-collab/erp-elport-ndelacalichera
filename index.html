@@ -142,7 +142,7 @@
 <div id="modalContainer"></div>
 
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbw__M3FEzCpohsoEpcoPeTlxDjQVspeNIzXGT0KmkswvmYDB3pSUuHzspJZHzLFmBz_Hg/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbz_uMUSw-IqUKyVlh4oqS45rr9U30GRyzYgcKKuPWWTriP2-ovGFVLUebbgoyUgp1Up/exec';
 
 let DB = {
     lotes: [], curva: [], protocolos: [], stock: [],
@@ -892,8 +892,8 @@ async function regLote() {
         const lote = {id, especie:esp, cantidad:cant, fechaLlegada:fecha, loteOrigen:'', sexo:''};
         DB.lotes.push(lote);
         if (costo > 0) {
-            const g = {id:'G_'+Date.now(), fecha, concepto:`🐾 Compra: ${esp} (${id})`, monto:costo};
-            DB.gastos.unshift(g);
+            const g = { fecha, concepto: `🐾 Compra: ${esp} (${id})`, monto: costo };
+            DB.gastos.unshift({id:'G_'+Date.now(), ...g});
             await enviarAlSheet('guardarGasto', g);
         }
         guardarLocal();
@@ -1064,14 +1064,20 @@ function renderProyeccion() {
     const todosLotes = [...activos, ...futuros];
     if (!todosLotes.length) { div.innerHTML = '<p style="color:#718096">Sin lotes registrados</p>'; return; }
 
-    // Insumos base: solo lotes activos, 14 días
+    // Insumos base: lotes activos + futuros que llegan en menos de 14 días
     const necesidadBase = {};
-    activos.forEach(l => {
-        const diaActual = diaF(l.fechaLlegada);
+    const lotesParaBase = [...activos, ...futuros.filter(l => diasParaLlegada(l.fechaLlegada) <= 14)];
+    lotesParaBase.forEach(l => {
+        const diaActual = Math.max(1, diaF(l.fechaLlegada));
         for (let dia = 0; dia < 14; dia++) {
             const semFutura = Math.floor((diaActual + dia - 1) / 7) + 1;
             const formula = getFormula(l.especie, semFutura);
-            const consumoDia = l.cantidad * (cDiario(l) || 0);
+            const curvaRef = DB.curva.find(c => c.semana == semFutura) || DB.curva.find(c => c.semana == 1);
+            if (!curvaRef) continue;
+            const esP = (l.especie||'').toLowerCase().includes('pato');
+            const consumoDia = l.cantidad * (esP ?
+                (l.sexo==='M' ? curvaRef.patoMacho/7 : l.sexo==='H' ? curvaRef.patoHembra/7 : (curvaRef.patoMacho+curvaRef.patoHembra)/2/7) :
+                curvaRef.cerdo/7);
             if (formula === 'Corimicyn') {
                 necesidadBase['Corimicyn'] = (necesidadBase['Corimicyn']||0) + consumoDia;
             } else {
@@ -1604,7 +1610,7 @@ async function quitarNevera(i){const item=DB.carneStock[i];if(!item)return;mostr
 // ============ GASTOS ============
 function vGastos(){return`${topbarHTML('💸 Gastos')}<div class="grid-2"><div class="card"><div class="card-header">➕ Nuevo Gasto</div><label>Categoría</label><select id="gastoConcepto"><option>Vacuna</option><option>Medicina</option><option>Jornal</option><option>Transporte</option><option>Servicios</option><option>Otros</option></select><label>Detalle</label><input type="text" id="gastoDetalle" placeholder="Descripción"><label>Monto S/</label><input type="number" id="gastoMonto"><label>Fecha</label><input type="date" id="gastoFecha"><button class="btn btn-primary" onclick="regGasto()" style="width:100%">✅ Registrar</button></div><div class="card"><div class="card-header">📋 Últimos Gastos</div><div id="listaGastos"></div></div></div>`;}
 function initGastos(){const gf=document.getElementById('gastoFecha');if(gf)gf.valueAsDate=new Date();renderGastos();}
-async function regGasto(){const c=document.getElementById('gastoConcepto')?.value,d=document.getElementById('gastoDetalle')?.value.trim(),m=parseFloat(document.getElementById('gastoMonto')?.value),f=document.getElementById('gastoFecha')?.value||hoy();if(!m)return mostrarMensaje('Ingresa monto','error');const g={id:'G_'+Date.now(),fecha:f,concepto:d?c+' - '+d:c,monto:m};mostrarModal('Confirmar Gasto',`${g.concepto}<br>S/ ${m.toFixed(2)}`,async()=>{DB.gastos.unshift(g);guardarLocal();const res=await enviarAlSheet('guardarGasto',g);if(!res.success)PENDIENTES.push({accion:'guardarGasto',datos:g});mostrarMensaje('✅ Gasto registrado');renderizar(vistaActual);});}
+async function regGasto(){const c=document.getElementById('gastoConcepto')?.value,d=document.getElementById('gastoDetalle')?.value.trim(),m=parseFloat(document.getElementById('gastoMonto')?.value),f=document.getElementById('gastoFecha')?.value||hoy();if(!m)return mostrarMensaje('Ingresa monto','error');const g={fecha:f,concepto:d?c+' - '+d:c,monto:m};mostrarModal('Confirmar Gasto',`${g.concepto}<br>S/ ${m.toFixed(2)}`,async()=>{DB.gastos.unshift({id:'G_'+Date.now(),...g});guardarLocal();const res=await enviarAlSheet('guardarGasto',g);if(!res.success)PENDIENTES.push({accion:'guardarGasto',datos:g});mostrarMensaje('✅ Gasto registrado');renderizar(vistaActual);});}
 function renderGastos(){const div=document.getElementById('listaGastos');if(!div)return;div.innerHTML=DB.gastos.slice(0,20).map(g=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0;font-size:13px"><div><b>${g.concepto||''}</b><br><small>${g.fecha}</small></div><div style="color:#e74c3c;font-weight:700;white-space:nowrap">S/ ${(parseFloat(g.monto)||0).toFixed(2)}</div></div>`).join('')||'<p style="color:#718096">Sin gastos</p>';}
 
 // ============ MORTALIDAD ============
