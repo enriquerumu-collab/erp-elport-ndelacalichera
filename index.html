@@ -1293,6 +1293,8 @@ async function regPreparar() {
 
 // ============ VENTAS ============
 let cliV = null;
+let lotesVenta = []; // lotes seleccionados para la venta
+
 function vVentas() {
     return `${topbarHTML('💰 Ventas')}
     <div class="grid-2">
@@ -1309,19 +1311,21 @@ function vVentas() {
                 <input type="text" id="vCliTel" placeholder="Teléfono">
                 <button class="btn btn-primary btn-sm" onclick="crearCliV()">Guardar</button>
             </div>
-            <label>Lote</label>
-            <select id="vLote" onchange="actLoteV()" style="margin-bottom:10px">
-                ${DB.lotes.map((l,i)=>`<option value="${i}">${l.id} (${l.cantidad})</option>`).join('')}
-            </select>
-            <div id="vPatosFields" style="display:none">
-                <div class="form-row">
-                    <div><label>🦆 Cabezas</label><input type="number" id="vCabezas" oninput="calcTotV()"></div>
-                    <div><label>⚖️ Peso (kg)</label><input type="number" id="vKg" oninput="calcTotV()"></div>
-                </div>
+
+            <label>Lotes a vender</label>
+            <div id="vLotesCheck" style="margin-bottom:10px;background:#f7fafc;padding:10px;border-radius:8px">
+                ${DB.lotes.map((l,i) => `
+                <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #e2e8f0">
+                    <input type="checkbox" id="chkLote${i}" value="${i}" onchange="actualizarCamposVenta()" style="width:auto;margin:0">
+                    <label for="chkLote${i}" style="font-size:13px;font-weight:500;margin:0;cursor:pointer">
+                        ${(l.especie||'').includes('Pato')?'🦆':'🐷'} ${l.id} 
+                        <span style="color:#718096;font-weight:400">(${l.cantidad} animales${l.sexo?' — '+( l.sexo==='M'?'Machos':'Hembras'):''})</span>
+                    </label>
+                </div>`).join('')}
             </div>
-            <div id="vCerdoFields" style="display:none">
-                <label>⚖️ Kg</label><input type="number" id="vKgCerdo" oninput="calcTotV()">
-            </div>
+
+            <div id="vCamposLotes"></div>
+
             <label>Precio x kg S/</label><input type="number" id="vPrecio" oninput="calcTotV()">
             <label>Fecha</label><input type="date" id="vFecha">
             <div id="vMetodoPagoDiv" style="display:none">
@@ -1332,31 +1336,181 @@ function vVentas() {
                     <option value="Yape/Plin">📱 Yape/Plin</option>
                 </select>
             </div>
-            <div id="vResumen" style="display:none;background:#f0fff4;padding:12px;border-radius:8px;font-size:22px;font-weight:700;text-align:center;margin-bottom:10px"></div>
+            <div id="vResumen" style="display:none;background:#f0fff4;padding:12px;border-radius:8px;font-size:20px;font-weight:700;text-align:center;margin-bottom:10px"></div>
             <div class="form-row">
-                <button class="btn btn-primary" onclick="mostrarMetodoPago('contado')">💰 Contado</button>
-                <button class="btn btn-warning" onclick="vender('credito')">💳 Crédito</button>
+                <button class="btn btn-primary" onclick="venderMulti('contado')">💰 Contado</button>
+                <button class="btn btn-warning" onclick="venderMulti('credito')">💳 Crédito</button>
             </div>
         </div>
         <div class="card"><div class="card-header">📋 Últimas Ventas</div><div id="ultimasV"></div></div>
     </div>`;
 }
 
-function mostrarMetodoPago(tipo) {
-    if (tipo === 'contado') {
-        const div = document.getElementById('vMetodoPagoDiv');
-        if (div) div.style.display = 'block';
-        document.getElementById('vMetodoPago')?.focus();
-        // Cambiar botón contado a confirmar
-        vender('contado');
-    }
+function actualizarCamposVenta() {
+    const div = document.getElementById('vCamposLotes');
+    if (!div) return;
+    let html = '';
+    DB.lotes.forEach((l, i) => {
+        const chk = document.getElementById(`chkLote${i}`);
+        if (!chk || !chk.checked) return;
+        const esP = (l.especie||'').toLowerCase().includes('pato');
+        const sexoLabel = l.sexo === 'M' ? ' ♂ Machos' : l.sexo === 'H' ? ' ♀ Hembras' : '';
+        html += `<div style="background:#f0fff4;padding:10px;border-radius:8px;margin-bottom:8px;border-left:3px solid #27ae60">
+            <div style="font-size:13px;font-weight:700;margin-bottom:8px">${l.id}${sexoLabel}</div>
+            <div class="form-row">
+                <div><label>Cabezas</label><input type="number" id="vCab_${i}" placeholder="0" oninput="calcTotV()" max="${l.cantidad}"></div>
+                ${esP ? `<div><label>Peso (kg)</label><input type="number" id="vKg_${i}" placeholder="0.0" oninput="calcTotV()"></div>` : ''}
+            </div>
+            ${!esP ? `<label>Peso total (kg)</label><input type="number" id="vKg_${i}" placeholder="0.0" oninput="calcTotV()">` : ''}
+        </div>`;
+    });
+    div.innerHTML = html;
+    calcTotV();
+}
+
+function calcTotV() {
+    let kgTotal = 0;
+    let hayDatos = false;
+    DB.lotes.forEach((l, i) => {
+        const chk = document.getElementById(`chkLote${i}`);
+        if (!chk || !chk.checked) return;
+        const kg = parseFloat(document.getElementById(`vKg_${i}`)?.value)||0;
+        kgTotal += kg;
+        if (kg > 0) hayDatos = true;
+    });
+    const pr = parseFloat(document.getElementById('vPrecio')?.value)||0;
+    const r = document.getElementById('vResumen');
+    if (hayDatos && pr > 0 && r) {
+        r.style.display = 'block';
+        r.innerHTML = `💰 S/ ${(kgTotal * pr).toFixed(2)} <small style="font-size:14px;color:#718096">(${kgTotal.toFixed(1)} kg)</small>`;
+    } else if (r) r.style.display = 'none';
+}
+
+async function venderMulti(tipo) {
+    if (!cliV) return mostrarMensaje('Selecciona un cliente', 'error');
+    const pr = parseFloat(document.getElementById('vPrecio')?.value);
+    if (!pr) return mostrarMensaje('Ingresa el precio', 'error');
+    const fecha = document.getElementById('vFecha')?.value || hoy();
+    const metodoPago = tipo === 'contado' ? (document.getElementById('vMetodoPago')?.value || 'Efectivo') : 'Crédito';
+
+    // Recopilar datos de cada lote seleccionado
+    const lotesSeleccionados = [];
+    DB.lotes.forEach((l, i) => {
+        const chk = document.getElementById(`chkLote${i}`);
+        if (!chk || !chk.checked) return;
+        const cab = parseInt(document.getElementById(`vCab_${i}`)?.value)||0;
+        const kg = parseFloat(document.getElementById(`vKg_${i}`)?.value)||0;
+        if (!cab || !kg) return;
+        if (cab > l.cantidad) { mostrarMensaje(`${l.id}: solo hay ${l.cantidad} animales`, 'error'); return; }
+        lotesSeleccionados.push({ lote: l, idx: i, cab, kg });
+    });
+
+    if (!lotesSeleccionados.length) return mostrarMensaje('Completa cabezas y peso para al menos un lote', 'error');
+
+    const kgTotal = lotesSeleccionados.reduce((s,x) => s+x.kg, 0);
+    const cabTotal = lotesSeleccionados.reduce((s,x) => s+x.cab, 0);
+    const total = kgTotal * pr;
+    const c = DB.clientes.find(x => x.id === cliV.id);
+
+    // Armar resumen para el modal
+    let resumenHTML = lotesSeleccionados.map(x =>
+        `<div style="padding:4px 0">${x.lote.id}: <b>${x.cab} cabezas — ${x.kg} kg</b></div>`
+    ).join('');
+    resumenHTML += `<div style="margin-top:8px;font-size:18px;font-weight:700">Total: ${kgTotal.toFixed(1)} kg — S/ ${total.toFixed(2)}</div>`;
+
+    mostrarModal(tipo==='contado'?'💰 Contado':'💳 Crédito',
+        `<b>${c?.nombre}</b><br>${resumenHTML}`,
+        async () => {
+            // Mostrar método de pago para contado
+            if (tipo === 'contado') {
+                const mpDiv = document.getElementById('vMetodoPagoDiv');
+                if (mpDiv) mpDiv.style.display = 'block';
+            }
+
+            // Registrar una venta por lote
+            for (const x of lotesSeleccionados) {
+                const subtotal = x.kg * pr;
+                const v = {
+                    id: (tipo==='contado'?'VC_':'VCR_')+Date.now()+'_'+x.idx,
+                    clienteId: cliV.id,
+                    loteId: x.lote.id,
+                    especie: x.lote.especie,
+                    cabezas: x.cab,
+                    kg: x.kg,
+                    precio: pr,
+                    total: subtotal,
+                    fecha, tipo, metodoPago,
+                    sexo: x.lote.sexo || '',
+                    anulado: false
+                };
+                if (tipo==='contado') DB.ventasContado.push(v);
+                else DB.ventasCredito.push(v);
+
+                // Descontar del lote
+                x.lote.cantidad -= x.cab;
+                if (x.lote.cantidad <= 0) DB.lotes = DB.lotes.filter(l => l.id !== x.lote.id);
+
+                const res = await enviarAlSheet('guardarVenta', v);
+                if (!res.success) PENDIENTES.push({accion:'guardarVenta', datos:v});
+            }
+
+            guardarLocal();
+
+            // Mostrar ticket con desglose
+            mostrarTicketMulti(tipo, {
+                cliente: c?.nombre||'?',
+                lotes: lotesSeleccionados,
+                precio: pr,
+                kgTotal,
+                cabTotal,
+                total: total.toFixed(2),
+                fecha,
+                metodoPago
+            });
+            renderizar(vistaActual);
+        });
+}
+
+function mostrarTicketMulti(tipo, d) {
+    const desglose = d.lotes.map(x => {
+        const sexoLabel = x.lote.sexo === 'M' ? ' ♂ Machos' : x.lote.sexo === 'H' ? ' ♀ Hembras' : '';
+        return `<p style="font-family:monospace">${x.lote.id}${sexoLabel}: ${x.cab} cab. — ${x.kg} kg</p>`;
+    }).join('');
+
+    const html = `<div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:10px;margin-bottom:10px">
+        <h2 style="font-family:monospace">🌾 El Porton de la Calichera 🌽</h2>
+        <p style="font-family:monospace">997 884 114 — TICKET ${tipo.toUpperCase()}</p>
+        <p style="font-family:monospace">${d.fecha||hoy()}</p>
+    </div>
+    <p style="font-family:monospace"><b>Cliente:</b> ${d.cliente}</p>
+    <p style="font-family:monospace">— — — — — — — — — — — — —</p>
+    ${desglose}
+    <p style="font-family:monospace">— — — — — — — — — — — — —</p>
+    <p style="font-family:monospace">Total cabezas: ${d.cabTotal}</p>
+    <p style="font-family:monospace">Total peso: ${d.kgTotal.toFixed(1)} kg</p>
+    <p style="font-family:monospace">Precio: S/ ${parseFloat(d.precio).toFixed(2)}/kg</p>
+    ${d.metodoPago?`<p style="font-family:monospace">Método: ${d.metodoPago}</p>`:''}
+    <p style="font-family:monospace;font-size:20px;font-weight:700;text-align:right;border-top:2px solid #000;padding-top:8px;margin-top:8px">TOTAL: S/ ${d.total}</p>
+    <p style="font-family:monospace;text-align:center">${tipo==='contado'?'✅ PAGADO':'⏳ PENDIENTE'}</p>`;
+
+    document.getElementById('modalContainer').innerHTML = `
+        <div class="modal-overlay" id="mo"><div class="modal" style="max-width:480px">
+            <h3>🧾 Ticket</h3>
+            <div id="ticketContent" style="border:1px solid #ddd;padding:16px;border-radius:8px">${html}</div>
+            <div class="modal-actions">
+                <button class="btn btn-whatsapp" onclick="compartirTicket()">💬 WhatsApp</button>
+                <button class="btn btn-accent" onclick="window.print()">🖨️</button>
+                <button class="btn btn-primary" onclick="cerrarModal()">Cerrar</button>
+            </div>
+        </div></div>`;
+    document.getElementById('mo').onclick = e=>{ if(e.target.id==='mo') cerrarModal(); };
 }
 
 function initVentas() {
     cliV = null;
+    lotesVenta = [];
     const fd = document.getElementById('vFecha');
     if (fd) fd.valueAsDate = new Date();
-    actLoteV();
     renderUltimasV();
 }
 
@@ -1378,52 +1532,7 @@ async function crearCliV() {
     document.getElementById('vCliN').style.display='none';
     await enviarAlSheet('guardarCliente',cli); mostrarMensaje('✅ Cliente creado');
 }
-function actLoteV() {
-    const idx=document.getElementById('vLote')?.value; if(idx===''||idx===undefined) return;
-    const l=DB.lotes[parseInt(idx)]; if(!l) return;
-    const esP=(l.especie||'').toLowerCase().includes('pato');
-    document.getElementById('vPatosFields').style.display=esP?'block':'none';
-    document.getElementById('vCerdoFields').style.display=esP?'none':'block';
-    calcTotV();
-}
-function calcTotV() {
-    const idx=document.getElementById('vLote')?.value; if(idx===''||idx===undefined) return;
-    const l=DB.lotes[parseInt(idx)]; if(!l) return;
-    const pr=parseFloat(document.getElementById('vPrecio')?.value)||0;
-    const esP=(l.especie||'').toLowerCase().includes('pato');
-    const kg=esP?(parseFloat(document.getElementById('vKg')?.value)||0):(parseFloat(document.getElementById('vKgCerdo')?.value)||0);
-    const r=document.getElementById('vResumen');
-    if(kg>0&&pr>0&&r){r.style.display='block';r.innerHTML=`💰 S/ ${(kg*pr).toFixed(2)}`;}else if(r) r.style.display='none';
-}
-async function vender(tipo) {
-    if (!cliV) return mostrarMensaje('Selecciona un cliente', 'error');
-    const idx = document.getElementById('vLote')?.value;
-    if (idx===''||idx===undefined) return mostrarMensaje('Selecciona lote', 'error');
-    const l = DB.lotes[parseInt(idx)]; if(!l) return;
-    const pr = parseFloat(document.getElementById('vPrecio')?.value); if(!pr) return mostrarMensaje('Ingresa precio', 'error');
-    const fecha = document.getElementById('vFecha')?.value||hoy();
-    const metodoPago = tipo === 'contado' ? (document.getElementById('vMetodoPago')?.value || 'Efectivo') : 'Crédito';
-    const esP = (l.especie||'').toLowerCase().includes('pato');
-    const cb = esP ? parseInt(document.getElementById('vCabezas')?.value)||0 : 0;
-    const kg = esP ? parseFloat(document.getElementById('vKg')?.value)||0 : parseFloat(document.getElementById('vKgCerdo')?.value)||0;
-    if (esP&&(!cb||!kg)) return mostrarMensaje('Ingresa cabezas y peso', 'error');
-    if (!esP&&!kg) return mostrarMensaje('Ingresa kg', 'error');
-    if (esP&&cb>l.cantidad) return mostrarMensaje(`Solo hay ${l.cantidad} aves`, 'error');
-    const total = kg*pr; const c = DB.clientes.find(x=>x.id===cliV.id);
-    mostrarModal(tipo==='contado'?'💰 Contado':'💳 Crédito',
-        `<b>${c?.nombre}</b><br>${esP?cb+' cabezas / ':''}${kg} kg<br>Método: <b>${metodoPago}</b><br><b style="font-size:18px">Total: S/ ${total.toFixed(2)}</b>`,
-        async () => {
-            const v = {id:(tipo==='contado'?'VC_':'VCR_')+Date.now(), clienteId:cliV.id, loteId:l.id, especie:l.especie, cabezas:cb, kg, precio:pr, total, fecha, tipo, metodoPago, anulado:false};
-            if(tipo==='contado') DB.ventasContado.push(v); else DB.ventasCredito.push(v);
-            if(esP) l.cantidad-=cb; else l.cantidad-=Math.max(1,Math.floor(kg/100));
-            if(l.cantidad<=0) DB.lotes=DB.lotes.filter(x=>x.id!==l.id);
-            guardarLocal();
-            const res = await enviarAlSheet('guardarVenta', v);
-            if(!res.success) PENDIENTES.push({accion:'guardarVenta', datos:v});
-            mostrarTicket(tipo, {cliente:c?.nombre||'?', especie:l.especie, cabezas:cb, kg, precio:pr, total:total.toFixed(2), fecha, metodoPago});
-            renderizar(vistaActual);
-        });
-}
+
 function renderUltimasV() {
     const div=document.getElementById('ultimasV'); if(!div) return;
     const todas=[...DB.ventasContado,...DB.ventasCredito].sort((a,b)=>b.fecha.localeCompare(a.fecha)).slice(0,8);
