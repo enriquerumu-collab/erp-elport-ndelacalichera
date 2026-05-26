@@ -320,7 +320,16 @@ async function sincronizar() {
             }
             if (d.protocolos && d.protocolos.length) DB.protocolos = d.protocolos;
             if (d.curva && d.curva.length) DB.curva = d.curva;
-            if (d.stock && d.stock.length) DB.stock = d.stock;
+            if (d.stock && d.stock.length) {
+                // Normalizar: fusionar entradas con y sin emoji 🥣
+                const stockMap = {};
+                d.stock.forEach(s => {
+                    const nombreSinEmoji = (s.nombre||'').replace('🥣 ','');
+                    if (!stockMap[nombreSinEmoji]) stockMap[nombreSinEmoji] = 0;
+                    stockMap[nombreSinEmoji] += parseFloat(s.cantidad)||0;
+                });
+                DB.stock = Object.entries(stockMap).map(([nombre, cantidad]) => ({nombre, cantidad}));
+            }
             if (d.gastos) DB.gastos = d.gastos.map(g => ({ ...g, fecha: normalizarFecha(g.fecha) }));
             if (d.clientes) DB.clientes = d.clientes;
             if (d.proveedores) DB.proveedores = d.proveedores || [];
@@ -1244,6 +1253,9 @@ async function regPreparar() {
         const nombrePrep = '🥣 '+f;
         const s = DB.stock.find(st=>st.nombre===nombrePrep);
         if (s) s.cantidad += k; else DB.stock.push({nombre:nombrePrep, cantidad:k});
+        // tambien actualizar stock sin emoji para que coincida con sheet
+        const sBase = DB.stock.find(st=>st.nombre===f);
+        if (sBase) sBase.cantidad += k; else DB.stock.push({nombre:f, cantidad:k});
         guardarLocal();
         const res = await enviarAlSheet('guardarPreparacion', {fecha, formulaPreparada:f, kgPreparados:k, insumos, lote});
         if (!res.success) PENDIENTES.push({accion:'guardarPreparacion', datos:{fecha, formulaPreparada:f, kgPreparados:k, insumos, lote}});
@@ -1542,7 +1554,12 @@ async function regMortalidad(){const idx=document.getElementById('mortLote')?.va
 function renderMortalidad(){const div=document.getElementById('listaMortalidad');if(!div)return;div.innerHTML=DB.mortalidad.slice(0,20).map(m=>`<div style="padding:8px 0;border-bottom:1px solid #e2e8f0;font-size:13px"><b>${m.loteId}</b>: ${m.cantidad} ${m.especie} — ${m.causa}${m.detalle?' ('+m.detalle+')':''}<br><small>${m.fecha}</small></div>`).join('')||'<p style="color:#718096">Sin registros</p>';}
 
 // ============ STOCK ============
-function vStock(){return`${topbarHTML('📦 Stock')}<div class="grid-2"><div class="card"><div class="card-header">🌽 Insumos Base</div>${DB.stock.filter(s=>!(s.nombre||'').startsWith('🥣')).map(s=>{const c=parseFloat(s.cantidad)||0;return`<div class="stock-item"><div><b>${s.nombre}</b></div><div style="color:${c<=0?'#e74c3c':c<10?'#e67e22':'#27ae60'};font-weight:700">${c.toFixed(2)} kg</div></div>`;}).join('')||'<p style="color:#718096">Sin datos. Sincroniza.</p>'}</div><div class="card"><div class="card-header">🥣 Alimento Preparado</div>${DB.stock.filter(s=>(s.nombre||'').startsWith('🥣')).map(s=>`<div class="stock-item"><div><b>${s.nombre}</b></div><div style="color:#27ae60;font-weight:700">${(parseFloat(s.cantidad)||0).toFixed(2)} kg</div></div>`).join('')||'<p style="color:#718096">Sin alimento preparado</p>'}</div></div>`;}
+function vStock(){
+    const FORMULAS_ALIMENTO = ['Pato Inicio','Pato Crecimiento','Pato Acabado','Cerdo Inicio','Cerdo Crecimiento','Cerdo Desarrollo','Cerdo Acabado','Corimicyn'];
+    const insumosBase = DB.stock.filter(s => !FORMULAS_ALIMENTO.includes((s.nombre||'').replace('🥣 ','')));
+    const alimentoPrep = DB.stock.filter(s => FORMULAS_ALIMENTO.includes((s.nombre||'').replace('🥣 ','')));
+    return`${topbarHTML('📦 Stock')}<div class="grid-2"><div class="card"><div class="card-header">🌽 Insumos Base</div>${insumosBase.map(s=>{const c=parseFloat(s.cantidad)||0;return`<div class="stock-item"><div><b>${s.nombre}</b></div><div style="color:${c<=0?'#e74c3c':c<10?'#e67e22':'#27ae60'};font-weight:700">${c.toFixed(2)} kg</div></div>`;}).join('')||'<p style="color:#718096">Sin datos. Sincroniza.</p>'}</div><div class="card"><div class="card-header">🥣 Alimento Preparado</div>${alimentoPrep.map(s=>{const c=parseFloat(s.cantidad)||0;return`<div class="stock-item"><div><b>${s.nombre.replace('🥣 ','')}</b></div><div style="color:${c<=0?'#e74c3c':c>0?'#27ae60':'#718096'};font-weight:700">${c.toFixed(2)} kg</div></div>`;}).join('')||'<p style="color:#718096">Sin alimento preparado</p>'}</div></div>`;
+}
 
 // ============ TICKETS ============
 function vTickets(){return`${topbarHTML('🧾 Tickets')}<div class="card"><div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px"><input type="text" id="tktBuscar" placeholder="🔍 Buscar..." oninput="renderTickets()" style="flex:1;min-width:150px;margin:0"><input type="date" id="tktDesde" onchange="renderTickets()" style="width:160px;margin:0"><input type="date" id="tktHasta" onchange="renderTickets()" style="width:160px;margin:0"></div><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Total</th><th>Tipo</th><th></th></tr></thead><tbody id="tktTabla"></tbody></table></div>`;}
