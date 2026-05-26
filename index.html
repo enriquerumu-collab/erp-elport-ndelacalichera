@@ -1017,7 +1017,8 @@ function renderProyeccion() {
         const diasHastaLlegada = Math.max(0, -(diaF(l.fechaLlegada) - 1));
         const diaActual = Math.max(1, diaF(l.fechaLlegada));
         for (let dia = diasHastaLlegada; dia < 14; dia++) {
-            const semFutura = Math.floor((diaActual + dia - 1) / 7) + 1;
+            const diasDeVida = dia - diasHastaLlegada;
+            const semFutura = Math.floor(((diaActual - 1) + diasDeVida) / 7) + 1;
             const formula = getFormula(l.especie, semFutura);
             const curvaRef = DB.curva.find(c => c.semana == semFutura) || DB.curva.find(c => c.semana == 1);
             if (!curvaRef) continue;
@@ -1043,7 +1044,8 @@ function renderProyeccion() {
         const diasHastaLlegadaN = Math.max(0, -(diaF(l.fechaLlegada) - 1));
         const diaActual = Math.max(1, diaF(l.fechaLlegada));
         for (let dia = diasHastaLlegadaN; dia < 14; dia++) {
-            const semFutura = Math.floor((diaActual + dia - diasHastaLlegadaN) / 7) + 1;
+            const diasDeVidaN = dia - diasHastaLlegadaN;
+            const semFutura = Math.floor(((diaActual - 1) + diasDeVidaN) / 7) + 1;
             const formula = getFormula(l.especie, semFutura);
             if (formula === 'Corimicyn') continue;
             const curvaRef = DB.curva.find(c => c.semana == semFutura) || DB.curva.find(c => c.semana == 1);
