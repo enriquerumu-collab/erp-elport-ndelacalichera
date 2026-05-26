@@ -142,7 +142,7 @@
 <div id="modalContainer"></div>
 
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbxs3MzDYtoMDRLJesXO7L3S95V4QeYsVpl_95y1Jo7Hh_v2FMOS75Kj9HU5LrrPHGESCQ/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbzgb21ruwDt26pj5utoBifr0Bp_5fFW6Vtmnmpnkzvr0lwa87PI9lzODVnApBpnbjf1Hw/exec';
 
 let DB = {
     lotes: [], curva: [], protocolos: [], stock: [],
@@ -516,6 +516,10 @@ function vDashboard() {
         if (NUCLEOS_CERDO.some(n => nom.includes(n.replace('Nucleo ','').replace('Núcleo ',''))) && !hayCerdos()) return;
         if (NUCLEOS_CERDO.includes(nom) && !hayCerdos()) return;
         if (NUCLEOS_PATO.includes(nom) && !hayPatos()) return;
+        // No alertar fórmulas de alimento que el lote aún no usa
+        const FORMULAS_ALIMENTO = ['Pato Inicio','Pato Crecimiento','Pato Acabado','Cerdo Inicio','Cerdo Crecimiento','Cerdo Desarrollo','Cerdo Acabado','Corimicyn'];
+        const formulasActivas = new Set(lotesActivos().map(l => getFormula(l.especie, semF(l.fechaLlegada))));
+        if (FORMULAS_ALIMENTO.includes(nom) && !formulasActivas.has(nom)) return;
         if (c <= 0) {
             alertasHTML += `<div class="alerta-item alerta-critica">🔴 <b>${nom}</b> AGOTADO</div>`;
         } else if (c < 10) {
@@ -1189,7 +1193,6 @@ function vPreparar() {
             <select id="prepFormula" onchange="mostrarReceta()">${Object.keys(getRecetas()).map(f=>`<option>${f}</option>`).join('')}</select>
             <div class="form-row">
                 <div><label>Kilos</label><input type="number" id="prepKilos" placeholder="100" oninput="mostrarReceta()"></div>
-                <div><label>Lote</label><select id="prepLote"><option value="">-- Todos --</option>${DB.lotes.map(l=>`<option value="${l.id}">${l.id}</option>`).join('')}</select></div>
             </div>
             <label>Fecha</label><input type="date" id="prepFecha">
             <div id="cajaReceta" style="display:none;margin-top:12px;background:#f0fff4;padding:14px;border-radius:8px;border-left:4px solid #27ae60">
@@ -1227,7 +1230,7 @@ async function regPreparar() {
     const f = document.getElementById('prepFormula')?.value;
     const k = parseFloat(document.getElementById('prepKilos')?.value);
     const fecha = document.getElementById('prepFecha')?.value||hoy();
-    const lote = document.getElementById('prepLote')?.value||'';
+    const lote = '';
     if (!f||!k) return mostrarMensaje('Selecciona fórmula y kilos', 'error');
     const receta = getRecetas()[f];
     mostrarModal('Confirmar Preparación', `<b>${f}</b> — ${k} kg<br>Fecha: ${fecha}`, async () => {
