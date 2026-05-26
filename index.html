@@ -1020,8 +1020,9 @@ function renderProyeccion() {
     const necesidadBase = {};
     const lotesParaBase = [...activos, ...futuros.filter(l => diasParaLlegada(l.fechaLlegada) <= 14)];
     lotesParaBase.forEach(l => {
+        const diasHastaLlegada = Math.max(0, -(diaF(l.fechaLlegada) - 1));
         const diaActual = Math.max(1, diaF(l.fechaLlegada));
-        for (let dia = 0; dia < 14; dia++) {
+        for (let dia = diasHastaLlegada; dia < 14; dia++) {
             const semFutura = Math.floor((diaActual + dia - 1) / 7) + 1;
             const formula = getFormula(l.especie, semFutura);
             const curvaRef = DB.curva.find(c => c.semana == semFutura) || DB.curva.find(c => c.semana == 1);
@@ -1045,9 +1046,10 @@ function renderProyeccion() {
 
     const necesidadNucleos14 = {};
     todosLotes.forEach(l => {
+        const diasHastaLlegadaN = Math.max(0, -(diaF(l.fechaLlegada) - 1));
         const diaActual = Math.max(1, diaF(l.fechaLlegada));
-        for (let dia = 0; dia < 14; dia++) {
-            const semFutura = Math.floor((diaActual + dia - 1) / 7) + 1;
+        for (let dia = diasHastaLlegadaN; dia < 14; dia++) {
+            const semFutura = Math.floor((diaActual + dia - diasHastaLlegadaN) / 7) + 1;
             const formula = getFormula(l.especie, semFutura);
             if (formula === 'Corimicyn') continue;
             const curvaRef = DB.curva.find(c => c.semana == semFutura) || DB.curva.find(c => c.semana == 1);
@@ -1550,7 +1552,8 @@ function renderGastos(){const div=document.getElementById('listaGastos');if(!div
 // ============ MORTALIDAD ============
 function vMortalidad(){return`${topbarHTML('💀 Mortalidad')}<div class="grid-2"><div class="card"><div class="card-header">➕ Registrar</div><label>Lote</label><select id="mortLote">${DB.lotes.map((l,i)=>`<option value="${i}">${l.id} (${l.cantidad})</option>`).join('')}</select><div class="form-row"><div><label>Cantidad</label><input type="number" id="mortCant"></div><div><label>Causa</label><select id="mortCausa"><option>Enfermedad</option><option>Accidente</option><option>Selección</option><option>Descarte</option><option>Desconocida</option></select></div></div><label>Detalle</label><input type="text" id="mortDetalle" placeholder="Observaciones"><label>Fecha</label><input type="date" id="mortFecha"><button class="btn btn-danger" onclick="regMortalidad()" style="width:100%">💀 Registrar</button></div><div class="card"><div class="card-header">📋 Historial</div><div id="listaMortalidad"></div></div></div>`;}
 function initMortalidad(){const mf=document.getElementById('mortFecha');if(mf)mf.valueAsDate=new Date();renderMortalidad();}
-async function regMortalidad(){const idx=document.getElementById('mortLote')?.value,cant=parseInt(document.getElementById('mortCant')?.value),causa=document.getElementById('mortCausa')?.value,detalle=document.getElementById('mortDetalle')?.value.trim()||'',fecha=document.getElementById('mortFecha')?.value||hoy();if(idx===''||idx===undefined||!cant)return mostrarMensaje('Selecciona lote y cantidad','error');const l=DB.lotes[parseInt(idx)];if(!l)return;if(cant>l.cantidad)return mostrarMensaje(`Solo hay ${l.cantidad}`,'error');mostrarModal('Confirmar',`<b>${l.id}</b><br>${cant} ${l.especie}<br>${causa}`,async()=>{const m={id:'MORT_'+Date.now(),loteId:l.id,especie:l.especie,cantidad:cant,causa,detalle,fecha};DB.mortalidad.push(m);l.cantidad-=cant;if(l.cantidad<=0)DB.lotes=DB.lotes.filter(x=>x.id!==l.id);guardarLocal();const res=await enviarAlSheet('guardarMortalidad',m);if(!res.success)PENDIENTES.push({accion:'guardarMortalidad',datos:m});mostrarMensaje('✅ Mortalidad registrada');renderizar(vistaActual);});}
+async function regMortalidad(){const idx=document.getElementById('mortLote')?.value,cant=parseInt(document.getElementById('mortCant')?.value),causa=document.getElementById('mortCausa')?.value,detalle=document.getElementById('mortDetalle')?.value.trim()||'',fecha=document.getElementById('mortFecha')?.value||hoy();if(idx===''||idx===undefined||!cant)return mostrarMensaje('Selecciona lote y cantidad','error');const l=DB.lotes[parseInt(idx)];if(!l)return;if(cant>l.cantidad)return mostrarMensaje(`Solo hay ${l.cantidad}`,'error');mostrarModal('Confirmar',`<b>${l.id}</b><br>${cant} ${l.especie}<br>${causa}`,async()=>{const m={id:'MORT_'+Date.now(),loteId:l.id,especie:l.especie,cantidad:cant,causa,detalle,fecha};DB.mortalidad.push(m);l.cantidad-=cant;if(l.cantidad<=0)DB.lotes=DB.lotes.filter(x=>x.id!==l.id);guardarLocal();const resMort=await enviarAlSheet('guardarMortalidad',m);if(!resMort.success)PENDIENTES.push({accion:'guardarMortalidad',datos:m});// Actualizar cantidad en lote del sheet
+if(l.cantidad>0){const resLote=await enviarAlSheet('editarLote',{id:l.id,cantidad:l.cantidad});if(!resLote.success)PENDIENTES.push({accion:'editarLote',datos:{id:l.id,cantidad:l.cantidad}});}mostrarMensaje('✅ Mortalidad registrada');renderizar(vistaActual);});}
 function renderMortalidad(){const div=document.getElementById('listaMortalidad');if(!div)return;div.innerHTML=DB.mortalidad.slice(0,20).map(m=>`<div style="padding:8px 0;border-bottom:1px solid #e2e8f0;font-size:13px"><b>${m.loteId}</b>: ${m.cantidad} ${m.especie} — ${m.causa}${m.detalle?' ('+m.detalle+')':''}<br><small>${m.fecha}</small></div>`).join('')||'<p style="color:#718096">Sin registros</p>';}
 
 // ============ STOCK ============
