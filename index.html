@@ -1029,7 +1029,7 @@ function renderProyeccion() {
                 (l.sexo==='M' ? curvaRef.patoMacho/7 : l.sexo==='H' ? curvaRef.patoHembra/7 : (curvaRef.patoMacho+curvaRef.patoHembra)/2/7) :
                 curvaRef.cerdo/7);
             if (formula === 'Corimicyn') {
-                necesidadBase['Corimicyn'] = (necesidadBase['Corimicyn']||0) + consumoDia;
+                // Corimicyn se calcula aparte directamente
             } else {
                 const receta = getRecetas()[formula] || {};
                 for (const ing in receta) {
@@ -1186,7 +1186,9 @@ function renderProyeccionNucleos() {
     ];
 
     const todosLotes = [...lotesActivos(), ...lotesFuturos()];
-    if (!todosLotes.length) { div.innerHTML = '<p style="color:#718096">Sin lotes</p>'; return; }
+    const lotesPato = todosLotes.filter(l => (l.especie||'').toLowerCase().includes('pato'));
+    if (!lotesPato.length) { div.innerHTML = '<p style="color:#718096">Sin lotes de patos. Sincroniza.</p>'; return; }
+    if (!DB.curva.length) { div.innerHTML = '<p style="color:#718096">Sin curva de consumo. Sincroniza primero.</p>'; return; }
 
     const recetas = getRecetas();
     const stockNucleos = {};
@@ -1196,10 +1198,8 @@ function renderProyeccionNucleos() {
 
     let html = '';
 
-    todosLotes.forEach(l => {
+    lotesPato.forEach(l => {
         const esFuturo = diaF(l.fechaLlegada) < 1;
-        const esP = (l.especie||'').toLowerCase().includes('pato');
-        if (!esP) return; // solo patos por ahora
 
         const semActual = esFuturo ? 0 : semF(l.fechaLlegada);
         const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
