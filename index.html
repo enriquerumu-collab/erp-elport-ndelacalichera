@@ -321,14 +321,8 @@ async function sincronizar() {
             if (d.protocolos && d.protocolos.length) DB.protocolos = d.protocolos;
             if (d.curva && d.curva.length) DB.curva = d.curva;
             if (d.stock && d.stock.length) {
-                // Normalizar: fusionar entradas con y sin emoji 🥣
-                const stockMap = {};
-                d.stock.forEach(s => {
-                    const nombreSinEmoji = (s.nombre||'').replace('🥣 ','');
-                    if (!stockMap[nombreSinEmoji]) stockMap[nombreSinEmoji] = 0;
-                    stockMap[nombreSinEmoji] += parseFloat(s.cantidad)||0;
-                });
-                DB.stock = Object.entries(stockMap).map(([nombre, cantidad]) => ({nombre, cantidad}));
+                // Stock viene directo de columna G->J del sheet (SUMIF ya calculado)
+                DB.stock = d.stock.map(s => ({...s, nombre: (s.nombre||'').replace('🥣 ','')}));
             }
             if (d.gastos) DB.gastos = d.gastos.map(g => ({ ...g, fecha: normalizarFecha(g.fecha) }));
             if (d.clientes) DB.clientes = d.clientes;
