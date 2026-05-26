@@ -1178,145 +1178,178 @@ function renderProyeccionNucleos() {
     const div = document.getElementById('proyeccionNucleos');
     if (!div) return;
 
-    const ETAPAS_PATO = [
-        { nombre: 'Pre-Inicio (Corimicyn)', semIni: 1, semFin: 1, nucleo: null },
-        { nombre: 'Inicio', semIni: 2, semFin: 3, nucleo: 'Nucleo Pato Inicio' },
-        { nombre: 'Crecimiento', semIni: 4, semFin: 7, nucleo: 'Nucleo Pato Crecimiento' },
-        { nombre: 'Acabado', semIni: 8, semFin: 12, nucleo: 'Nucleo Pato Acabado' }
+    const lotesPato = [...lotesActivos(), ...lotesFuturos()].filter(l => (l.especie||'').toLowerCase().includes('pato'));
+    if (!lotesPato.length) { div.innerHTML = '<p style="color:#718096">Sin lotes de patos. Sincroniza.</p>'; return; }
+    if (!DB.curva.length) { div.innerHTML = '<p style="color:#718096">Sincroniza primero.</p>'; return; }
+
+    const ETAPAS = [
+        { nombre: 'Inicio',      semIni: 2, semFin: 3,  nucleo: 'Nucleo Pato Inicio',      formula: 'Pato Inicio' },
+        { nombre: 'Crecimiento', semIni: 4, semFin: 7,  nucleo: 'Nucleo Pato Crecimiento', formula: 'Pato Crecimiento' },
+        { nombre: 'Acabado',     semIni: 8, semFin: 12, nucleo: 'Nucleo Pato Acabado',     formula: 'Pato Acabado' }
     ];
 
-    const todosLotes = [...lotesActivos(), ...lotesFuturos()];
-    const lotesPato = todosLotes.filter(l => (l.especie||'').toLowerCase().includes('pato'));
-    if (!lotesPato.length) { div.innerHTML = '<p style="color:#718096">Sin lotes de patos. Sincroniza.</p>'; return; }
-    if (!DB.curva.length) { div.innerHTML = '<p style="color:#718096">Sin curva de consumo. Sincroniza primero.</p>'; return; }
-
+    const hoyDate = new Date(hoy() + 'T00:00:00');
     const recetas = getRecetas();
+
+    // Stock actual por núcleo (compartido entre lotes)
     const stockNucleos = {};
-    ['Nucleo Pato Inicio','Nucleo Pato Crecimiento','Nucleo Pato Acabado'].forEach(n => {
-        stockNucleos[n] = getStock(n) || getStock(n.replace('Nucleo','Núcleo'));
+    ETAPAS.forEach(e => {
+        stockNucleos[e.nucleo] = getStock(e.nucleo) || getStock(e.nucleo.replace('Nucleo ','Núcleo '));
     });
 
-    let html = '';
+    // Necesidad consolidada por núcleo (todos los lotes)
+    const necesidadTotal = { 'Nucleo Pato Inicio': 0, 'Nucleo Pato Crecimiento': 0, 'Nucleo Pato Acabado': 0 };
 
-    lotesPato.forEach(l => {
+    // Calcular necesidad por lote
+    const datosLotes = lotesPato.map(l => {
+        const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
         const esFuturo = diaF(l.fechaLlegada) < 1;
 
-        const semActual = esFuturo ? 0 : semF(l.fechaLlegada);
-        const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
+        const etapasLote = ETAPAS.map(etapa => {
+            const diaIniEtapa = (etapa.semIni - 1) * 7;
+            const diaFinEtapa = etapa.semFin * 7 - 1;
+            const fechaIni = new Date(fechaLlegada.getTime() + diaIniEtapa * 86400000);
+            const fechaFin = new Date(fechaLlegada.getTime() + diaFinEtapa * 86400000);
 
+            // Solo contar días restantes desde hoy
+            const diaIniEfectivo = hoyDate > fechaIni ? hoyDate : fechaIni;
+            const diasRestantes = fechaFin >= hoyDate
+                ? Math.floor((fechaFin - diaIniEfectivo) / 86400000) + 1
+                : 0;
+
+            // Estado de la etapa
+            let estado;
+            if (fechaFin < hoyDate) estado = 'completada';
+            else if (fechaIni <= hoyDate) estado = 'en_curso';
+            else estado = 'proxima';
+
+            // Consumo diario promedio de la etapa
+            let consumoDiaProm = 0;
+            for (let s = etapa.semIni; s <= etapa.semFin; s++) {
+                const curvaS = DB.curva.find(c => c.semana == s) || DB.curva[0];
+                if (curvaS) consumoDiaProm += (curvaS.patoMacho + curvaS.patoHembra) / 2 / 7;
+            }
+            consumoDiaProm /= (etapa.semFin - etapa.semIni + 1);
+
+            // Kg de alimento restantes en esta etapa
+            const kgAlimento = l.cantidad * consumoDiaProm * diasRestantes;
+
+            // Kg de núcleo necesarios
+            const receta = recetas[etapa.formula] || {};
+            const kgNucleoReceta = receta[etapa.nucleo] || receta[etapa.nucleo.replace('Nucleo ','Núcleo ')] || 0;
+            const kgNucleo = kgNucleoReceta > 0 ? (kgNucleoReceta / 500) * kgAlimento : 0;
+            const kgPorSaco = NUCLEOS_KG[etapa.nucleo] || 10;
+
+            if (estado !== 'completada') {
+                necesidadTotal[etapa.nucleo] = (necesidadTotal[etapa.nucleo] || 0) + kgNucleo;
+            }
+
+            return {
+                ...etapa,
+                fechaIni: fechaIni.toISOString().split('T')[0],
+                fechaFin: fechaFin.toISOString().split('T')[0],
+                diasRestantes,
+                kgNucleo,
+                sacos: kgNucleo / kgPorSaco,
+                kgPorSaco,
+                estado
+            };
+        });
+
+        return { lote: l, esFuturo, etapas: etapasLote };
+    });
+
+    // ===== RENDER =====
+    let html = '';
+
+    // Tabla por lote
+    datosLotes.forEach(({ lote, esFuturo, etapas }) => {
         const borderColor = esFuturo ? '#9b59b6' : '#3498db';
         const etiqueta = esFuturo
             ? `<span style="background:#9b59b6;color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">FUTURO</span>`
             : `<span style="background:#3498db;color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">ACTIVO</span>`;
 
         html += `<div style="border-left:4px solid ${borderColor};padding:14px;background:#f7fafc;border-radius:8px;margin-bottom:16px">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-                <b style="font-size:15px">🦆 ${l.id}</b> ${etiqueta}
-                <span style="color:#718096;font-size:12px">${l.cantidad} animales | Llegada: ${l.fechaLlegada}</span>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+                <b style="font-size:15px">🦆 ${lote.id}</b> ${etiqueta}
+                <span style="color:#718096;font-size:12px">${lote.cantidad} animales | Llegada: ${lote.fechaLlegada}</span>
             </div>
             <table style="width:100%;border-collapse:collapse;font-size:13px">
                 <thead>
                     <tr style="background:#e2e8f0">
-                        <th style="padding:8px;text-align:left;border-radius:4px 0 0 0">Etapa</th>
+                        <th style="padding:8px;text-align:left">Etapa</th>
                         <th style="padding:8px;text-align:left">Núcleo</th>
                         <th style="padding:8px;text-align:center">Semanas</th>
-                        <th style="padding:8px;text-align:center">Fechas</th>
-                        <th style="padding:8px;text-align:right">Kg necesarios</th>
-                        <th style="padding:8px;text-align:right;border-radius:0 4px 0 0">Sacos</th>
+                        <th style="padding:8px;text-align:center">Hasta</th>
+                        <th style="padding:8px;text-align:right">Días restantes</th>
+                        <th style="padding:8px;text-align:right">Kg núcleo</th>
+                        <th style="padding:8px;text-align:right">Sacos</th>
                     </tr>
                 </thead>
                 <tbody>`;
 
-        ETAPAS_PATO.forEach(etapa => {
-            if (!etapa.nucleo) return; // skip Corimicyn
+        etapas.forEach(e => {
+            let estadoLabel = '';
+            if (e.estado === 'completada') estadoLabel = '<span style="color:#718096;font-size:11px">✓ Completada</span>';
+            else if (e.estado === 'en_curso') estadoLabel = '<span style="color:#27ae60;font-size:11px;font-weight:700">▶ En curso</span>';
+            else estadoLabel = '<span style="color:#3498db;font-size:11px">◷ Próxima</span>';
 
-            // Calcular fechas de esta etapa para este lote
-            const diaIniEtapa = (etapa.semIni - 1) * 7;
-            const diaFinEtapa = etapa.semFin * 7 - 1;
-            const fechaIni = new Date(fechaLlegada.getTime() + diaIniEtapa * 86400000);
-            const fechaFin = new Date(fechaLlegada.getTime() + diaFinEtapa * 86400000);
-            const fechaIniStr = fechaIni.toISOString().split('T')[0];
-            const fechaFinStr = fechaFin.toISOString().split('T')[0];
+            const colorKg = e.estado === 'completada' ? '#718096' : e.kgNucleo > 0 ? '#2d3748' : '#718096';
+            const rowBg = e.estado === 'completada' ? 'opacity:0.5' : '';
 
-            // Calcular kg de núcleo necesarios
-            const receta = recetas['Pato ' + etapa.nombre.split(' ')[0]] ||
-                           recetas[etapa.nombre.includes('Inicio') ? 'Pato Inicio' :
-                                   etapa.nombre.includes('Crecimiento') ? 'Pato Crecimiento' : 'Pato Acabado'];
-            const kgNucleoReceta = receta ? (receta[etapa.nucleo] || receta[etapa.nucleo.replace('Nucleo','Núcleo')] || 0) : 0;
-            const diasEtapa = (etapa.semFin - etapa.semIni + 1) * 7;
-
-            // Consumo diario promedio en la etapa
-            let consumoDiaProm = 0;
-            for (let s = etapa.semIni; s <= etapa.semFin; s++) {
-                const curvaS = DB.curva.find(c => c.semana == s) || DB.curva.find(c => c.semana == 1);
-                if (curvaS) consumoDiaProm += (curvaS.patoMacho + curvaS.patoHembra) / 2 / 7;
-            }
-            consumoDiaProm = consumoDiaProm / (etapa.semFin - etapa.semIni + 1);
-            const kgAlimentoTotal = l.cantidad * consumoDiaProm * diasEtapa;
-            const kgNucleoTotal = kgNucleoReceta > 0 ? (kgNucleoReceta / 500) * kgAlimentoTotal : 0;
-            const kgPorSaco = NUCLEOS_KG[etapa.nucleo] || 10;
-            const sacos = kgNucleoTotal / kgPorSaco;
-
-            // Determinar si ya pasó, está activa o es futura
-            const hoyStr = hoy();
-            let estadoEtapa = '';
-            if (fechaFinStr < hoyStr) {
-                estadoEtapa = '<span style="color:#718096;font-size:11px">✓ Completada</span>';
-            } else if (fechaIniStr <= hoyStr && fechaFinStr >= hoyStr) {
-                estadoEtapa = '<span style="color:#27ae60;font-size:11px;font-weight:700">▶ En curso</span>';
-            } else {
-                estadoEtapa = '<span style="color:#3498db;font-size:11px">◷ Próxima</span>';
-            }
-
-            const stockN = stockNucleos[etapa.nucleo] || 0;
-            const colorKg = kgNucleoTotal > stockN ? '#e74c3c' : '#27ae60';
-
-            html += `<tr style="border-bottom:1px solid #e2e8f0">
-                <td style="padding:8px">${etapa.nombre} ${estadoEtapa}</td>
-                <td style="padding:8px;color:#718096">${etapa.nucleo.replace('Nucleo ','')}</td>
-                <td style="padding:8px;text-align:center">S${etapa.semIni}–S${etapa.semFin}</td>
-                <td style="padding:8px;text-align:center;font-size:12px;color:#718096">${fechaIniStr}<br>${fechaFinStr}</td>
-                <td style="padding:8px;text-align:right;color:${colorKg};font-weight:700">${kgNucleoTotal.toFixed(1)} kg</td>
-                <td style="padding:8px;text-align:right;font-weight:700">${sacos.toFixed(1)}</td>
+            html += `<tr style="border-bottom:1px solid #e2e8f0;${rowBg}">
+                <td style="padding:8px">${e.nombre} ${estadoLabel}</td>
+                <td style="padding:8px;color:#718096">${e.nucleo.replace('Nucleo ','')}</td>
+                <td style="padding:8px;text-align:center">S${e.semIni}–S${e.semFin}</td>
+                <td style="padding:8px;text-align:center;font-size:12px;color:#718096">${e.fechaFin}</td>
+                <td style="padding:8px;text-align:right;color:#718096">${e.estado === 'completada' ? '—' : e.diasRestantes + 'd'}</td>
+                <td style="padding:8px;text-align:right;font-weight:700;color:${colorKg}">${e.estado === 'completada' ? '—' : e.kgNucleo.toFixed(1) + ' kg'}</td>
+                <td style="padding:8px;text-align:right">${e.estado === 'completada' ? '—' : e.sacos.toFixed(1)}</td>
             </tr>`;
         });
 
-        html += `</tbody></table>`;
-
-        // Resumen de stock vs necesidad para este lote
-        const nucleosLote = {};
-        ETAPAS_PATO.filter(e => e.nucleo).forEach(etapa => {
-            const receta = recetas[etapa.nombre.includes('Inicio') ? 'Pato Inicio' :
-                                   etapa.nombre.includes('Crecimiento') ? 'Pato Crecimiento' : 'Pato Acabado'];
-            const kgNucleoReceta = receta ? (receta[etapa.nucleo] || 0) : 0;
-            const diasEtapa = (etapa.semFin - etapa.semIni + 1) * 7;
-            let consumoDiaProm = 0;
-            for (let s = etapa.semIni; s <= etapa.semFin; s++) {
-                const curvaS = DB.curva.find(c => c.semana == s) || DB.curva.find(c => c.semana == 1);
-                if (curvaS) consumoDiaProm += (curvaS.patoMacho + curvaS.patoHembra) / 2 / 7;
-            }
-            consumoDiaProm = consumoDiaProm / (etapa.semFin - etapa.semIni + 1);
-            const kgAlimento = l.cantidad * consumoDiaProm * diasEtapa;
-            const kgNucleo = kgNucleoReceta > 0 ? (kgNucleoReceta / 500) * kgAlimento : 0;
-            nucleosLote[etapa.nucleo] = (nucleosLote[etapa.nucleo] || 0) + kgNucleo;
-        });
-
-        html += `<div style="margin-top:10px;padding:10px;background:white;border-radius:6px;font-size:12px">
-            <b>Resumen total del lote:</b><br>`;
-        Object.entries(nucleosLote).forEach(([nucleo, kg]) => {
-            const stock = stockNucleos[nucleo] || 0;
-            const sacos = kg / (NUCLEOS_KG[nucleo] || 10);
-            const ok = stock >= kg;
-            html += `<span style="margin-right:16px">${ok?'✅':'⚠️'} ${nucleo.replace('Nucleo ','')}:
-                <b>${kg.toFixed(1)} kg</b> (${sacos.toFixed(1)} sacos) |
-                Stock: <b style="color:${ok?'#27ae60':'#e74c3c'}">${stock.toFixed(1)} kg</b></span>`;
-        });
-        html += `</div></div>`;
+        html += `</tbody></table></div>`;
     });
 
-    if (!html) html = '<p style="color:#718096">Sin lotes de patos</p>';
+    // ===== RESUMEN CONSOLIDADO =====
+    html += `<div style="background:#1a202c;color:white;padding:16px;border-radius:10px;margin-top:8px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:12px">📦 Resumen consolidado — todos los lotes</div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+                <tr style="border-bottom:1px solid #4a5568">
+                    <th style="padding:8px;text-align:left;color:#a0aec0">Núcleo</th>
+                    <th style="padding:8px;text-align:right;color:#a0aec0">Stock actual</th>
+                    <th style="padding:8px;text-align:right;color:#a0aec0">Total necesario</th>
+                    <th style="padding:8px;text-align:right;color:#a0aec0">Faltante</th>
+                    <th style="padding:8px;text-align:right;color:#a0aec0">Sacos a comprar</th>
+                </tr>
+            </thead>
+            <tbody>`;
+
+    ETAPAS.forEach(e => {
+        const stock = stockNucleos[e.nucleo] || 0;
+        const necesario = necesidadTotal[e.nucleo] || 0;
+        const faltante = Math.max(0, necesario - stock);
+        const sacosComprar = Math.ceil(faltante / (NUCLEOS_KG[e.nucleo] || 10));
+        const color = faltante > 0 ? '#fc8181' : '#68d391';
+        const icono = faltante > 0 ? '🔴' : '✅';
+
+        html += `<tr style="border-bottom:1px solid #2d3748">
+            <td style="padding:8px;font-weight:600">${icono} ${e.nucleo.replace('Nucleo ','')}</td>
+            <td style="padding:8px;text-align:right;color:#68d391">${stock.toFixed(1)} kg (${(stock/(NUCLEOS_KG[e.nucleo]||10)).toFixed(1)} sacos)</td>
+            <td style="padding:8px;text-align:right;color:#a0aec0">${necesario.toFixed(1)} kg</td>
+            <td style="padding:8px;text-align:right;color:${color};font-weight:700">${faltante > 0 ? faltante.toFixed(1)+' kg' : '—'}</td>
+            <td style="padding:8px;text-align:right;color:${color};font-weight:700">${faltante > 0 ? sacosComprar+' saco(s)' : 'OK'}</td>
+        </tr>`;
+    });
+
+    html += `</tbody></table>
+        <div style="font-size:11px;color:#718096;margin-top:8px">* Considera días restantes de etapas en curso + etapas futuras de todos los lotes</div>
+    </div>`;
+
     div.innerHTML = html;
 }
+
 
 function renderHistorialCompras() {
     const div = document.getElementById('historialCompras');
