@@ -938,6 +938,7 @@ function vCompras() {
         </div>
     </div>
     <div class="card"><div class="card-header">📋 Historial de Compras</div><div id="historialCompras"></div></div>
+    <div class="card"><div class="card-header">📅 Calendario de Pedidos Recomendados</div><div id="calendarioPedidos"></div></div>
     <div class="card"><div class="card-header">🧮 Proyección de Núcleos por Lote</div><div id="proyeccionNucleos"></div></div>`;
 }
 
@@ -948,6 +949,7 @@ function initCompras() {
     renderProyeccion();
     renderHistorialCompras();
     renderProyeccionNucleos();
+    renderCalendarioPedidos();
 }
 
 function agregarAlCarrito() {
@@ -1350,6 +1352,231 @@ function renderProyeccionNucleos() {
     div.innerHTML = html;
 }
 
+
+
+function renderCalendarioPedidos() {
+    const div = document.getElementById('calendarioPedidos');
+    if (!div) return;
+
+    const lotesPato = [...lotesActivos(), ...lotesFuturos()].filter(l => (l.especie||'').toLowerCase().includes('pato'));
+    if (!lotesPato.length || !DB.curva.length) {
+        div.innerHTML = '<p style="color:#718096">Sin lotes. Sincroniza.</p>';
+        return;
+    }
+
+    const NUCLEOS_INFO = [
+        { nucleo: 'Nucleo Pato Inicio',      formula: 'Pato Inicio',      semIni: 2, semFin: 3  },
+        { nucleo: 'Nucleo Pato Crecimiento', formula: 'Pato Crecimiento', semIni: 4, semFin: 7  },
+        { nucleo: 'Nucleo Pato Acabado',     formula: 'Pato Acabado',     semIni: 8, semFin: 12 }
+    ];
+
+    const hoyDate = new Date(hoy() + 'T00:00:00');
+    const recetas = getRecetas();
+
+    // Stock actual por nucleo
+    const stockActual = {};
+    NUCLEOS_INFO.forEach(n => {
+        stockActual[n.nucleo] = getStock(n.nucleo) || getStock(n.nucleo.replace('Nucleo ','Núcleo '));
+    });
+
+    // Construir timeline de necesidades: { fecha, nucleo, kg, loteId }
+    const timeline = [];
+    lotesPato.forEach(l => {
+        const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
+        NUCLEOS_INFO.forEach(ni => {
+            const diaIni = (ni.semIni - 1) * 7;
+            const diaFin = ni.semFin * 7 - 1;
+            const fechaIni = new Date(fechaLlegada.getTime() + diaIni * 86400000);
+            const fechaFin = new Date(fechaLlegada.getTime() + diaFin * 86400000);
+
+            // Solo etapas que aún no terminaron
+            if (fechaFin < hoyDate) return;
+
+            const diaIniEfectivo = hoyDate > fechaIni ? hoyDate : fechaIni;
+            const diasRestantes = Math.floor((fechaFin - diaIniEfectivo) / 86400000) + 1;
+            if (diasRestantes <= 0) return;
+
+            // Consumo diario promedio
+            let consumoDiaProm = 0;
+            for (let s = ni.semIni; s <= ni.semFin; s++) {
+                const curvaS = DB.curva.find(c => c.semana == s) || DB.curva[0];
+                if (curvaS) consumoDiaProm += (curvaS.patoMacho + curvaS.patoHembra) / 2 / 7;
+            }
+            consumoDiaProm /= (ni.semFin - ni.semIni + 1);
+
+            const kgAlimento = l.cantidad * consumoDiaProm * diasRestantes;
+            const receta = recetas[ni.formula] || {};
+            const kgNucleoReceta = receta[ni.nucleo] || receta[ni.nucleo.replace('Nucleo ','Núcleo ')] || 0;
+            const kgNucleo = kgNucleoReceta > 0 ? (kgNucleoReceta / 500) * kgAlimento : 0;
+
+            if (kgNucleo > 0) {
+                timeline.push({
+                    fechaInicio: diaIniEfectivo,
+                    fechaFin: fechaFin,
+                    nucleo: ni.nucleo,
+                    kg: kgNucleo,
+                    loteId: l.id,
+                    kgPorSaco: NUCLEOS_KG[ni.nucleo] || 10
+                });
+            }
+        });
+    });
+
+    if (!timeline.length) {
+        div.innerHTML = '<div class="alerta-ok alerta-item">✅ Sin necesidades de núcleos próximas</div>';
+        return;
+    }
+
+    // Generar pedidos cada ~3 semanas (21 días)
+    // Primer pedido: próximo lunes
+    const diasHastaLunes = (8 - hoyDate.getDay()) % 7 || 7;
+    const primerLunes = new Date(hoyDate.getTime() + diasHastaLunes * 86400000);
+    
+    const pedidos = [];
+    const stockSimulado = { ...stockActual };
+    const yaAdelantado = {};
+    NUCLEOS_INFO.forEach(n => yaAdelantado[n.nucleo] = 0);
+
+    // Generar hasta 4 pedidos
+    for (let p = 0; p < 4; p++) {
+        const fechaPedido = new Date(primerLunes.getTime() + p * 21 * 86400000);
+        const fechaLlegada = new Date(fechaPedido.getTime() + 86400000); // llega martes
+        const ventanaFin = new Date(fechaPedido.getTime() + 21 * 86400000); // cubre 3 semanas
+
+        // Calcular necesidad en esta ventana por nucleo
+        const necesidadVentana = {};
+        NUCLEOS_INFO.forEach(n => necesidadVentana[n.nucleo] = 0);
+
+        timeline.forEach(t => {
+            // ¿Hay solapamiento entre la ventana y esta necesidad?
+            const inicioSolap = t.fechaInicio > fechaLlegada ? t.fechaInicio : fechaLlegada;
+            const finSolap = t.fechaFin < ventanaFin ? t.fechaFin : ventanaFin;
+            if (inicioSolap > finSolap) return;
+
+            const diasTotales = Math.floor((t.fechaFin - t.fechaInicio) / 86400000) + 1;
+            const diasSolap = Math.floor((finSolap - inicioSolap) / 86400000) + 1;
+            const kgProporcional = t.kg * (diasSolap / diasTotales);
+            necesidadVentana[t.nucleo] = (necesidadVentana[t.nucleo] || 0) + kgProporcional;
+        });
+
+        // Calcular sacos necesarios descontando stock simulado y ya adelantado
+        const itemsPedido = [];
+        let totalSacos = 0;
+
+        NUCLEOS_INFO.forEach(ni => {
+            const necesario = necesidadVentana[ni.nucleo] || 0;
+            const stockDisp = Math.max(0, stockSimulado[ni.nucleo] - yaAdelantado[ni.nucleo]);
+            const faltante = Math.max(0, necesario - stockDisp);
+            if (faltante <= 0) return;
+            const sacos = Math.ceil(faltante / ni.kgPorSaco);
+            const kg = sacos * (NUCLEOS_KG[ni.nucleo] || 10);
+            itemsPedido.push({ nucleo: ni.nucleo, sacos, kg, urgente: p === 0 });
+            totalSacos += sacos;
+        });
+
+        if (itemsPedido.length === 0) continue;
+
+        // Completar hasta 6 sacos si no llega
+        let adelantos = [];
+        if (totalSacos < 6) {
+            const faltanParaGratis = 6 - totalSacos;
+            // Buscar el mejor núcleo para adelantar: el más próximo y mayor cantidad futura
+            const candidatos = NUCLEOS_INFO.map(ni => {
+                // Necesidad futura después de esta ventana
+                let kgFuturo = 0;
+                timeline.forEach(t => {
+                    if (t.nucleo !== ni.nucleo) return;
+                    if (t.fechaInicio <= ventanaFin) return;
+                    kgFuturo += t.kg;
+                });
+                const sacosFuturos = Math.ceil(Math.max(0, kgFuturo - Math.max(0, stockSimulado[ni.nucleo])) / (NUCLEOS_KG[ni.nucleo] || 10));
+                return { nucleo: ni.nucleo, kgFuturo, sacosFuturos, kgPorSaco: NUCLEOS_KG[ni.nucleo] || 10 };
+            }).filter(c => c.sacosFuturos > 0).sort((a,b) => b.kgFuturo - a.kgFuturo);
+
+            if (candidatos.length > 0) {
+                const mejor = candidatos[0];
+                const sacosAdelantar = Math.min(faltanParaGratis, mejor.sacosFuturos);
+                if (sacosAdelantar > 0) {
+                    adelantos.push({ nucleo: mejor.nucleo, sacos: sacosAdelantar });
+                    yaAdelantado[mejor.nucleo] = (yaAdelantado[mejor.nucleo] || 0) + sacosAdelantar * mejor.kgPorSaco;
+                    totalSacos += sacosAdelantar;
+                }
+            }
+        }
+
+        // Actualizar stock simulado
+        itemsPedido.forEach(item => {
+            stockSimulado[item.nucleo] = (stockSimulado[item.nucleo] || 0) + item.kg;
+        });
+
+        pedidos.push({
+            fechaPedido,
+            fechaLlegada,
+            items: itemsPedido,
+            adelantos,
+            totalSacos
+        });
+    }
+
+    if (!pedidos.length) {
+        div.innerHTML = '<div class="alerta-ok alerta-item">✅ Stock suficiente, sin pedidos necesarios próximamente</div>';
+        return;
+    }
+
+    // ===== RENDER =====
+    const diasHasta = (fecha) => Math.floor((fecha - hoyDate) / 86400000);
+    const fmtFecha = (d) => d.toISOString().split('T')[0];
+
+    let html = '';
+    pedidos.forEach((ped, idx) => {
+        const dias = diasHasta(ped.fechaPedido);
+        const urgente = dias <= 3;
+        const headerColor = urgente ? '#e74c3c' : idx === 1 ? '#e67e22' : '#3498db';
+        const headerBg = urgente ? '#fff5f5' : idx === 1 ? '#fffaf0' : '#ebf8ff';
+        const iconoPedido = urgente ? '🔴' : idx === 1 ? '🟡' : '🔵';
+        const labelUrgencia = urgente ? 'URGENTE' : dias <= 14 ? 'PRÓXIMO' : 'PLANIFICADO';
+
+        html += `<div style="border:2px solid ${headerColor};border-radius:10px;margin-bottom:16px;overflow:hidden">
+            <div style="background:${headerBg};padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                <div>
+                    <span style="font-weight:700;font-size:15px">${iconoPedido} Pedido ${idx+1} — ${labelUrgencia}</span>
+                    <span style="color:#718096;font-size:13px;margin-left:12px">Pedir: <b>${fmtFecha(ped.fechaPedido)}</b> (lunes) | Llega: <b>${fmtFecha(ped.fechaLlegada)}</b></span>
+                </div>
+                <span style="background:${headerColor};color:white;padding:4px 12px;border-radius:6px;font-weight:700;font-size:13px">
+                    ${ped.totalSacos} sacos ${ped.totalSacos >= 6 ? '✅ envío gratis' : '⚠️ sin envío gratis'}
+                </span>
+            </div>
+            <div style="padding:12px 16px">`;
+
+        // Items necesarios
+        ped.items.forEach(item => {
+            const kgPorSaco = NUCLEOS_KG[item.nucleo] || 10;
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e2e8f0;font-size:13px">
+                <span>📦 <b>${item.nucleo.replace('Nucleo ','')}</b></span>
+                <span style="color:#2d3748;font-weight:700">${item.sacos} saco(s) — ${item.kg.toFixed(1)} kg</span>
+            </div>`;
+        });
+
+        // Adelantos
+        ped.adelantos.forEach(adel => {
+            const kgPorSaco = NUCLEOS_KG[adel.nucleo] || 10;
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e2e8f0;font-size:13px;background:#fffbea">
+                <span>⏩ <b>${adel.nucleo.replace('Nucleo ','')}</b> <span style="color:#718096;font-size:11px">(adelantado para llegar a 6)</span></span>
+                <span style="color:#e67e22;font-weight:700">${adel.sacos} saco(s) — ${(adel.sacos*kgPorSaco).toFixed(1)} kg</span>
+            </div>`;
+        });
+
+        if (ped.totalSacos < 6) {
+            html += `<div style="background:#fff3cd;padding:8px 12px;border-radius:6px;margin-top:8px;font-size:12px">
+                ⚠️ Solo ${ped.totalSacos} sacos — considera si vale la pena pagar envío o esperar al siguiente pedido
+            </div>`;
+        }
+
+        html += `</div></div>`;
+    });
+
+    div.innerHTML = html;
+}
 
 function renderHistorialCompras() {
     const div = document.getElementById('historialCompras');
