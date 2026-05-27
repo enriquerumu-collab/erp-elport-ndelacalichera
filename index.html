@@ -1365,9 +1365,9 @@ function renderCalendarioPedidos() {
     }
 
     const NUCLEOS_INFO = [
-        { nucleo: 'Nucleo Pato Inicio',      formula: 'Pato Inicio',      semIni: 2, semFin: 3  },
-        { nucleo: 'Nucleo Pato Crecimiento', formula: 'Pato Crecimiento', semIni: 4, semFin: 7  },
-        { nucleo: 'Nucleo Pato Acabado',     formula: 'Pato Acabado',     semIni: 8, semFin: 12 }
+        { nucleo: 'Nucleo Pato Inicio',      formula: 'Pato Inicio',      semIni: 2, semFin: 3,  kgPorSaco: 10 },
+        { nucleo: 'Nucleo Pato Crecimiento', formula: 'Pato Crecimiento', semIni: 4, semFin: 7,  kgPorSaco: 10 },
+        { nucleo: 'Nucleo Pato Acabado',     formula: 'Pato Acabado',     semIni: 8, semFin: 12, kgPorSaco: 10 }
     ];
 
     const hoyDate = new Date(hoy() + 'T00:00:00');
@@ -1376,7 +1376,7 @@ function renderCalendarioPedidos() {
     // Stock actual por nucleo
     const stockActual = {};
     NUCLEOS_INFO.forEach(n => {
-        stockActual[n.nucleo] = getStock(n.nucleo) || getStock(n.nucleo.replace('Nucleo ','Núcleo '));
+        stockActual[n.nucleo] = getStock(n.nucleo) || getStock(n.nucleo.replace('Nucleo ','Núcleo ')) || 0;
     });
 
     // Construir timeline de necesidades: { fecha, nucleo, kg, loteId }
@@ -1404,19 +1404,20 @@ function renderCalendarioPedidos() {
             }
             consumoDiaProm /= (ni.semFin - ni.semIni + 1);
 
+            if (isNaN(consumoDiaProm) || consumoDiaProm <= 0) return;
             const kgAlimento = l.cantidad * consumoDiaProm * diasRestantes;
             const receta = recetas[ni.formula] || {};
-            const kgNucleoReceta = receta[ni.nucleo] || receta[ni.nucleo.replace('Nucleo ','Núcleo ')] || 0;
+            const kgNucleoReceta = parseFloat(receta[ni.nucleo] || receta[ni.nucleo.replace('Nucleo ','Núcleo ')] || 0);
             const kgNucleo = kgNucleoReceta > 0 ? (kgNucleoReceta / 500) * kgAlimento : 0;
 
-            if (kgNucleo > 0) {
+            if (kgNucleo > 0 && !isNaN(kgNucleo)) {
                 timeline.push({
                     fechaInicio: diaIniEfectivo,
                     fechaFin: fechaFin,
                     nucleo: ni.nucleo,
                     kg: kgNucleo,
                     loteId: l.id,
-                    kgPorSaco: NUCLEOS_KG[ni.nucleo] || 10
+                    kgPorSaco: ni.kgPorSaco
                 });
             }
         });
@@ -1468,8 +1469,8 @@ function renderCalendarioPedidos() {
             const stockDisp = Math.max(0, stockSimulado[ni.nucleo] - yaAdelantado[ni.nucleo]);
             const faltante = Math.max(0, necesario - stockDisp);
             if (faltante <= 0) return;
-            const sacos = Math.ceil(faltante / ni.kgPorSaco);
-            const kg = sacos * (NUCLEOS_KG[ni.nucleo] || 10);
+            const sacos = faltante > 0 ? Math.ceil(faltante / ni.kgPorSaco) : 0;
+            const kg = sacos * ni.kgPorSaco;
             itemsPedido.push({ nucleo: ni.nucleo, sacos, kg, urgente: p === 0 });
             totalSacos += sacos;
         });
