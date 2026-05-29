@@ -451,12 +451,16 @@ function initPlanificacion() {
     // Renderizar checkboxes de lotes
     const cont = document.getElementById('planLotesCheck');
     if (!cont) return;
-    const todosLotes = [...lotesActivos(), ...lotesFuturos()].filter(l => (l.especie||'').toLowerCase().includes('pato'));
+    const todosLotes = [...lotesActivos(), ...lotesFuturos()];
     cont.innerHTML = todosLotes.map((l,i) => {
         const esFuturo = diaF(l.fechaLlegada) < 1;
-        return `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;background:${esFuturo?'#f3e8ff':'#e8f4fd'};border-radius:8px;font-size:13px;font-weight:600">
+        const esCerdo = (l.especie||'').toLowerCase().includes('cerdo');
+        const bg = esFuturo ? '#f3e8ff' : esCerdo ? '#fff7ed' : '#e8f4fd';
+        const icono = esCerdo ? (esFuturo?'🟤':'🟠') : (esFuturo?'🟣':'🔵');
+        const emoji = esCerdo ? '🐷' : '🦆';
+        return `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;background:${bg};border-radius:8px;font-size:13px;font-weight:600">
             <input type="checkbox" id="planChk_${i}" checked onchange="renderPlanificacion()" style="width:auto;margin:0">
-            ${esFuturo?'🟣':'🔵'} ${l.id} <span style="font-weight:400;color:#718096">(${l.cantidad})</span>
+            ${icono} ${emoji} ${l.id} <span style="font-weight:400;color:#718096">(${l.cantidad})</span>
         </label>`;
     }).join('');
     window._planTab = 'consolidado';
@@ -471,7 +475,7 @@ function tabPlan(tab, el) {
 }
 
 function getLotesSeleccionadosPlan() {
-    const todosLotes = [...lotesActivos(), ...lotesFuturos()].filter(l => (l.especie||'').toLowerCase().includes('pato'));
+    const todosLotes = [...lotesActivos(), ...lotesFuturos()];
     return todosLotes.filter((l,i) => {
         const chk = document.getElementById(`planChk_${i}`);
         return chk ? chk.checked : true;
@@ -482,7 +486,8 @@ function calcProyeccionLote(lote) {
     // Devuelve array de semanas con datos de consumo
     const fechaLlegada = new Date(lote.fechaLlegada + 'T00:00:00');
     const semanas = [];
-    const TOTAL_SEMS = 12;
+    const esCerdo = (lote.especie||'').toLowerCase().includes('cerdo');
+    const TOTAL_SEMS = esCerdo ? 14 : 12; // cerdos tienen ciclo más largo
 
     for (let s = 1; s <= TOTAL_SEMS; s++) {
         const diaIni = (s-1)*7;
@@ -495,9 +500,15 @@ function calcProyeccionLote(lote) {
 
         const sexo = lote.sexo || '';
         let kgDiaPorAnimal;
-        if (sexo === 'M') kgDiaPorAnimal = curvaS.patoMacho / 7;
-        else if (sexo === 'H') kgDiaPorAnimal = curvaS.patoHembra / 7;
-        else kgDiaPorAnimal = (curvaS.patoMacho + curvaS.patoHembra) / 2 / 7;
+        if (esCerdo) {
+            kgDiaPorAnimal = (curvaS.cerdo || 0) / 7;
+        } else if (sexo === 'M') {
+            kgDiaPorAnimal = curvaS.patoMacho / 7;
+        } else if (sexo === 'H') {
+            kgDiaPorAnimal = curvaS.patoHembra / 7;
+        } else {
+            kgDiaPorAnimal = (curvaS.patoMacho + curvaS.patoHembra) / 2 / 7;
+        }
 
         const kgDia = lote.cantidad * kgDiaPorAnimal;
         const kgSem = kgDia * 7;
@@ -699,20 +710,25 @@ function renderPlanGrafico(cont, lotes) {
         const ctx = document.getElementById('chartPlan');
         if (!ctx) return;
 
-        // Construir semanas del CALENDARIO (lunes a domingo)
-        // desde la llegada del primer lote hasta el fin del último
-        let fechaMin = null, fechaMax = null;
+        // Construir semanas desde la llegada exacta de cada lote (sin fracciones)
+        // Cada lote aporta sus propias semanas completas de 7 días
+        let fechaMax = null;
         lotes.forEach(l => {
             const sems = calcProyeccionLote(l);
             if (!sems.length) return;
-            const fi = new Date(sems[0].fechaIni + 'T00:00:00');
             const ff = new Date(sems[sems.length-1].fechaFin + 'T00:00:00');
-            if (!fechaMin || fi < fechaMin) fechaMin = fi;
             if (!fechaMax || ff > fechaMax) fechaMax = ff;
         });
-        if (!fechaMin) { ctx.parentElement.innerHTML = '<p style="color:#718096">Sin datos</p>'; return; }
+        if (!fechaMax) { ctx.parentElement.innerHTML = '<p style="color:#718096">Sin datos</p>'; return; }
 
-        // Generar semanas de 7 días desde fechaMin
+        // Generar semanas del calendario desde el primer lote
+        // Pero arrancar desde la fecha de llegada del lote más temprano
+        let fechaMin = null;
+        lotes.forEach(l => {
+            const fi = new Date(l.fechaLlegada + 'T00:00:00');
+            if (!fechaMin || fi < fechaMin) fechaMin = fi;
+        });
+
         const semanasCalendario = [];
         let cursor = new Date(fechaMin);
         while (cursor <= fechaMax) {
@@ -726,30 +742,38 @@ function renderPlanGrafico(cont, lotes) {
             cursor = new Date(cursor.getTime() + 7*86400000);
         }
 
-        // Para cada lote, calcular kg consumidos en cada semana de calendario
         const colors = ['#3498db','#9b59b6','#e67e22','#e74c3c','#27ae60','#1abc9c'];
         const datasets = lotes.map((l, i) => {
             const semsLote = calcProyeccionLote(l);
+            const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
             const data = semanasCalendario.map(semCal => {
-                // Buscar qué semana del lote cae en esta semana de calendario
-                // Una semana de lote puede solaparse con la semana de calendario
+                const calIni = new Date(semCal.ini + 'T00:00:00');
+                const calFin = new Date(semCal.fin + 'T00:00:00');
+                // Si el lote aún no llega en esta semana → 0
+                if (fechaLlegada > calFin) return 0;
+                // Buscar semana del lote que cubre esta semana de calendario
+                // Solo contar días donde el lote ya llegó (>=fechaLlegada)
                 let kgTotal = 0;
                 semsLote.forEach(sl => {
                     const slIni = new Date(sl.fechaIni + 'T00:00:00');
                     const slFin = new Date(sl.fechaFin + 'T00:00:00');
-                    const calIni = new Date(semCal.ini + 'T00:00:00');
-                    const calFin = new Date(semCal.fin + 'T00:00:00');
-                    // Solapamiento
                     const solapIni = slIni > calIni ? slIni : calIni;
                     const solapFin = slFin < calFin ? slFin : calFin;
                     if (solapIni > solapFin) return;
-                    const diasSolap = Math.floor((solapFin - solapIni)/86400000) + 1;
+                    // No contar días antes de llegada
+                    const efectivoIni = solapIni > fechaLlegada ? solapIni : fechaLlegada;
+                    if (efectivoIni > solapFin) return;
+                    const diasSolap = Math.floor((solapFin - efectivoIni)/86400000) + 1;
+                    // Solo mostrar si son al menos 3 días (evitar barras de 1-2 días)
+                    if (diasSolap < 3) return;
                     kgTotal += sl.kgDia * diasSolap;
                 });
                 return parseFloat(kgTotal.toFixed(1));
             });
+            const esCerdo = (l.especie||'').toLowerCase().includes('cerdo');
+            const icono = esCerdo ? '🐷' : '🦆';
             return {
-                label: l.id + ' (' + l.cantidad + ')',
+                label: icono + ' ' + l.id + ' (' + l.cantidad + ')',
                 data,
                 backgroundColor: colors[i % colors.length] + 'bb',
                 borderColor: colors[i % colors.length],
@@ -1574,26 +1598,37 @@ function renderProyeccionNucleos() {
     if (!lotesPato.length) { div.innerHTML = '<p style="color:#718096">Sin lotes de patos. Sincroniza.</p>'; return; }
     if (!DB.curva.length) { div.innerHTML = '<p style="color:#718096">Sincroniza primero.</p>'; return; }
 
-    const ETAPAS = [
+    const ETAPAS_PATO = [
         { nombre: 'Inicio',      semIni: 2, semFin: 3,  nucleo: 'Nucleo Pato Inicio',      formula: 'Pato Inicio' },
         { nombre: 'Crecimiento', semIni: 4, semFin: 7,  nucleo: 'Nucleo Pato Crecimiento', formula: 'Pato Crecimiento' },
         { nombre: 'Acabado',     semIni: 8, semFin: 12, nucleo: 'Nucleo Pato Acabado',     formula: 'Pato Acabado' }
+    ];
+    const ETAPAS_CERDO = [
+        { nombre: 'Inicio',      semIni: 1, semFin: 4,  nucleo: 'Nucleo Cerdo Inicio',      formula: 'Cerdo Inicio' },
+        { nombre: 'Crecimiento', semIni: 5, semFin: 7,  nucleo: 'Nucleo Cerdo Crecimiento', formula: 'Cerdo Crecimiento' },
+        { nombre: 'Desarrollo',  semIni: 8, semFin: 10, nucleo: 'Nucleo Cerdo Desarrollo',  formula: 'Cerdo Desarrollo' },
+        { nombre: 'Acabado',     semIni: 11,semFin: 14, nucleo: 'Nucleo Cerdo Acabado',     formula: 'Cerdo Acabado' }
     ];
 
     const hoyDate = new Date(hoy() + 'T00:00:00');
     const recetas = getRecetas();
 
-    // Stock actual por núcleo (compartido entre lotes)
+    // Todos los lotes (patos y cerdos)
+    const todosLotesProy = [...lotesActivos(), ...lotesFuturos()];
+
+    // Stock actual por núcleo
     const stockNucleos = {};
-    ETAPAS.forEach(e => {
-        stockNucleos[e.nucleo] = getStock(e.nucleo) || getStock(e.nucleo.replace('Nucleo ','Núcleo '));
+    [...ETAPAS_PATO, ...ETAPAS_CERDO].forEach(e => {
+        stockNucleos[e.nucleo] = getStock(e.nucleo) || getStock(e.nucleo.replace('Nucleo ','Núcleo ')) || 0;
     });
 
-    // Necesidad consolidada por núcleo (todos los lotes)
-    const necesidadTotal = { 'Nucleo Pato Inicio': 0, 'Nucleo Pato Crecimiento': 0, 'Nucleo Pato Acabado': 0 };
+    // Necesidad consolidada
+    const necesidadTotal = {};
+    [...ETAPAS_PATO, ...ETAPAS_CERDO].forEach(e => necesidadTotal[e.nucleo] = 0);
 
-    // Calcular necesidad por lote
-    const datosLotes = lotesPato.map(l => {
+    const datosLotes = todosLotesProy.map(l => {
+        const esCerdo = (l.especie||'').toLowerCase().includes('cerdo');
+        const ETAPAS = esCerdo ? ETAPAS_CERDO : ETAPAS_PATO;
         const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
         const esFuturo = diaF(l.fechaLlegada) < 1;
 
@@ -1656,14 +1691,16 @@ function renderProyeccionNucleos() {
 
     // Tabla por lote
     datosLotes.forEach(({ lote, esFuturo, etapas }) => {
-        const borderColor = esFuturo ? '#9b59b6' : '#3498db';
+        const esCerdoLote = (lote.especie||'').toLowerCase().includes('cerdo');
+        const borderColor = esFuturo ? '#9b59b6' : esCerdoLote ? '#e67e22' : '#3498db';
         const etiqueta = esFuturo
             ? `<span style="background:#9b59b6;color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">FUTURO</span>`
-            : `<span style="background:#3498db;color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">ACTIVO</span>`;
+            : `<span style="background:${borderColor};color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">ACTIVO</span>`;
+        const emojiLote = esCerdoLote ? '🐷' : '🦆';
 
         html += `<div style="border-left:4px solid ${borderColor};padding:14px;background:#f7fafc;border-radius:8px;margin-bottom:16px">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-                <b style="font-size:15px">🦆 ${lote.id}</b> ${etiqueta}
+                <b style="font-size:15px">${emojiLote} ${lote.id}</b> ${etiqueta}
                 <span style="color:#718096;font-size:12px">${lote.cantidad} animales | Llegada: ${lote.fechaLlegada}</span>
             </div>
             <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -1718,7 +1755,12 @@ function renderProyeccionNucleos() {
             </thead>
             <tbody>`;
 
-    ETAPAS.forEach(e => {
+    [...ETAPAS_PATO, ...ETAPAS_CERDO].filter(e => {
+        // Solo mostrar núcleos de cerdos si hay cerdos
+        if (NUCLEOS_CERDO.includes(e.nucleo) && !hayCerdos()) return false;
+        if (NUCLEOS_PATO.includes(e.nucleo) && !hayPatos()) return false;
+        return true;
+    }).forEach(e => {
         const stock = stockNucleos[e.nucleo] || 0;
         const necesario = necesidadTotal[e.nucleo] || 0;
         const faltante = Math.max(0, necesario - stock);
@@ -1748,408 +1790,25 @@ function renderCalendarioPedidos() {
     const div = document.getElementById('calendarioPedidos');
     if (!div) return;
 
-    const lotesPato = [...lotesActivos(), ...lotesFuturos()].filter(l => (l.especie||'').toLowerCase().includes('pato'));
-    if (!lotesPato.length || !DB.curva.length) {
+    const todosLotesCal = [...lotesActivos(), ...lotesFuturos()];
+    if (!todosLotesCal.length || !DB.curva.length) {
         div.innerHTML = '<p style="color:#718096">Sin lotes. Sincroniza.</p>';
         return;
     }
 
     const NUCLEOS_INFO = [
-        { nucleo: 'Nucleo Pato Inicio',      formula: 'Pato Inicio',      semIni: 2, semFin: 3,  kgPorSaco: 10 },
-        { nucleo: 'Nucleo Pato Crecimiento', formula: 'Pato Crecimiento', semIni: 4, semFin: 7,  kgPorSaco: 10 },
-        { nucleo: 'Nucleo Pato Acabado',     formula: 'Pato Acabado',     semIni: 8, semFin: 12, kgPorSaco: 10 }
-    ];
-
-    const hoyDate = new Date(hoy() + 'T00:00:00');
-    const recetas = getRecetas();
-
-    // Stock actual
-    const stockActual = {};
-    NUCLEOS_INFO.forEach(n => {
-        stockActual[n.nucleo] = Math.max(0, getStock(n.nucleo) || getStock(n.nucleo.replace('Nucleo ','Núcleo ')) || 0);
+        { nucleo: 'Nucleo Pato Inicio',      formula: 'Pato Inicio',      semIni: 2, semFin: 3,  kgPorSaco: 10, especie: 'pato' },
+        { nucleo: 'Nucleo Pato Crecimiento', formula: 'Pato Crecimiento', semIni: 4, semFin: 7,  kgPorSaco: 10, especie: 'pato' },
+        { nucleo: 'Nucleo Pato Acabado',     formula: 'Pato Acabado',     semIni: 8, semFin: 12, kgPorSaco: 10, especie: 'pato' },
+        { nucleo: 'Nucleo Cerdo Inicio',      formula: 'Cerdo Inicio',      semIni: 1, semFin: 4,  kgPorSaco: 8.5, especie: 'cerdo' },
+        { nucleo: 'Nucleo Cerdo Crecimiento', formula: 'Cerdo Crecimiento', semIni: 5, semFin: 7,  kgPorSaco: 9,   especie: 'cerdo' },
+        { nucleo: 'Nucleo Cerdo Desarrollo',  formula: 'Cerdo Desarrollo',  semIni: 8, semFin: 10, kgPorSaco: 6,   especie: 'cerdo' },
+        { nucleo: 'Nucleo Cerdo Acabado',     formula: 'Cerdo Acabado',     semIni: 11,semFin: 14, kgPorSaco: 8,   especie: 'cerdo' }
+    ].filter(ni => {
+        if (ni.especie === 'cerdo' && !hayCerdos()) return false;
+        if (ni.especie === 'pato' && !hayPatos()) return false;
+        return true;
     });
-
-    // Construir timeline de necesidades por nucleo y fecha
-    const timeline = [];
-    lotesPato.forEach(l => {
-        const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
-        NUCLEOS_INFO.forEach(ni => {
-            const diaIni = (ni.semIni - 1) * 7;
-            const diaFin = ni.semFin * 7 - 1;
-            const fechaIni = new Date(fechaLlegada.getTime() + diaIni * 86400000);
-            const fechaFin = new Date(fechaLlegada.getTime() + diaFin * 86400000);
-            if (fechaFin < hoyDate) return;
-
-            const diaIniEfectivo = hoyDate > fechaIni ? hoyDate : fechaIni;
-            const diasRestantes = Math.floor((fechaFin - diaIniEfectivo) / 86400000) + 1;
-            if (diasRestantes <= 0) return;
-
-            let consumoDiaProm = 0;
-            for (let s = ni.semIni; s <= ni.semFin; s++) {
-                const curvaS = DB.curva.find(c => c.semana == s) || DB.curva[0];
-                if (curvaS) consumoDiaProm += (curvaS.patoMacho + curvaS.patoHembra) / 2 / 7;
-            }
-            consumoDiaProm /= (ni.semFin - ni.semIni + 1);
-            if (isNaN(consumoDiaProm) || consumoDiaProm <= 0) return;
-
-            const kgAlimento = l.cantidad * consumoDiaProm * diasRestantes;
-            const receta = recetas[ni.formula] || {};
-            const kgNucleoReceta = parseFloat(receta[ni.nucleo] || receta[ni.nucleo.replace('Nucleo ','Núcleo ')] || 0);
-            if (kgNucleoReceta <= 0) return;
-            const kgNucleo = (kgNucleoReceta / 500) * kgAlimento;
-            if (kgNucleo <= 0 || isNaN(kgNucleo)) return;
-
-            timeline.push({
-                fechaInicio: diaIniEfectivo,
-                fechaFin,
-                nucleo: ni.nucleo,
-                kg: kgNucleo,
-                kgPorSaco: ni.kgPorSaco,
-                loteId: l.id
-            });
-        });
-    });
-
-    if (!timeline.length) {
-        div.innerHTML = '<div class="alerta-ok alerta-item">✅ Sin necesidades próximas</div>';
-        return;
-    }
-
-    // Generar pedidos — primer lunes desde hoy
-    const diasHastaLunes = ((8 - hoyDate.getDay()) % 7) || 7;
-    const primerLunes = new Date(hoyDate.getTime() + diasHastaLunes * 86400000);
-
-    const pedidos = [];
-    const stockSim = { ...stockActual };
-    const yaAdelantado = {};
-    NUCLEOS_INFO.forEach(n => yaAdelantado[n.nucleo] = 0);
-
-    for (let p = 0; p < 4; p++) {
-        const fechaPedido = new Date(primerLunes.getTime() + p * 21 * 86400000);
-        const fechaLlegadaPedido = new Date(fechaPedido.getTime() + 86400000);
-        const ventanaFin = new Date(fechaPedido.getTime() + 21 * 86400000);
-
-        // Necesidad real en esta ventana
-        const necesidadVentana = {};
-        NUCLEOS_INFO.forEach(n => necesidadVentana[n.nucleo] = 0);
-
-        timeline.forEach(t => {
-            const inicioSolap = t.fechaInicio > fechaLlegadaPedido ? t.fechaInicio : fechaLlegadaPedido;
-            const finSolap = t.fechaFin < ventanaFin ? t.fechaFin : ventanaFin;
-            if (inicioSolap > finSolap) return;
-            const diasTotales = Math.floor((t.fechaFin - t.fechaInicio) / 86400000) + 1;
-            const diasSolap = Math.floor((finSolap - inicioSolap) / 86400000) + 1;
-            const kgProp = t.kg * (diasSolap / diasTotales);
-            if (!isNaN(kgProp)) necesidadVentana[t.nucleo] += kgProp;
-        });
-
-        // Items necesarios (descontando stock simulado)
-        const items = [];
-        let totalSacos = 0;
-
-        NUCLEOS_INFO.forEach(ni => {
-            const necesario = necesidadVentana[ni.nucleo] || 0;
-            const stockDisp = Math.max(0, (stockSim[ni.nucleo] || 0) - (yaAdelantado[ni.nucleo] || 0));
-            const faltante = Math.max(0, necesario - stockDisp);
-            if (faltante <= 0) return;
-            const sacos = Math.ceil(faltante / ni.kgPorSaco);
-            const kg = sacos * ni.kgPorSaco;
-            items.push({ nucleo: ni.nucleo, sacos, kg, kgPorSaco: ni.kgPorSaco });
-            totalSacos += sacos;
-        });
-
-        if (items.length === 0) continue;
-
-        // Adelantar para llegar a 6 si hace falta
-        const adelantos = [];
-        if (totalSacos < 6) {
-            const faltanParaGratis = 6 - totalSacos;
-
-            // Candidatos: núcleos NO en este pedido con necesidad futura
-            const candidatos = NUCLEOS_INFO.map(ni => {
-                if (items.find(i => i.nucleo === ni.nucleo)) return null; // ya está en el pedido
-                let kgFuturo = 0;
-                timeline.forEach(t => {
-                    if (t.nucleo !== ni.nucleo) return;
-                    if (t.fechaFin <= ventanaFin) return;
-                    const stockRestante = Math.max(0, (stockSim[ni.nucleo]||0) - (yaAdelantado[ni.nucleo]||0));
-                    kgFuturo += Math.max(0, t.kg - stockRestante);
-                });
-                if (kgFuturo <= 0) return null;
-                const sacosFuturos = Math.ceil(kgFuturo / ni.kgPorSaco);
-                return { nucleo: ni.nucleo, sacosFuturos, kgFuturo, kgPorSaco: ni.kgPorSaco };
-            }).filter(Boolean).sort((a,b) => b.kgFuturo - a.kgFuturo);
-
-            if (candidatos.length > 0) {
-                const mejor = candidatos[0];
-                const sacosAdelantar = Math.min(faltanParaGratis, mejor.sacosFuturos);
-                if (sacosAdelantar > 0) {
-                    adelantos.push({ nucleo: mejor.nucleo, sacos: sacosAdelantar, kgPorSaco: mejor.kgPorSaco });
-                    yaAdelantado[mejor.nucleo] = (yaAdelantado[mejor.nucleo]||0) + sacosAdelantar * mejor.kgPorSaco;
-                    totalSacos += sacosAdelantar;
-                }
-            }
-        }
-
-        // Actualizar stock simulado con lo que se compra
-        items.forEach(item => { stockSim[item.nucleo] = (stockSim[item.nucleo]||0) + item.kg; });
-        adelantos.forEach(adel => { stockSim[adel.nucleo] = (stockSim[adel.nucleo]||0) + adel.sacos * adel.kgPorSaco; });
-
-        pedidos.push({ fechaPedido, fechaLlegadaPedido, items, adelantos, totalSacos });
-    }
-
-    if (!pedidos.length) {
-        div.innerHTML = '<div class="alerta-ok alerta-item">✅ Stock suficiente, sin pedidos necesarios próximamente</div>';
-        return;
-    }
-
-    const fmtF = d => d.toISOString().split('T')[0];
-    const diasHasta = d => Math.floor((d - hoyDate) / 86400000);
-
-    let html = '';
-    pedidos.forEach((ped, idx) => {
-        const dias = diasHasta(ped.fechaPedido);
-        const urgente = dias <= 3;
-        const color = urgente ? '#e74c3c' : idx === 1 ? '#e67e22' : '#3498db';
-        const bg = urgente ? '#fff5f5' : idx === 1 ? '#fffaf0' : '#ebf8ff';
-        const icono = urgente ? '🔴' : idx === 1 ? '🟡' : '🔵';
-        const label = urgente ? 'URGENTE' : dias <= 14 ? 'PRÓXIMO' : 'PLANIFICADO';
-        const envioGratis = ped.totalSacos >= 6;
-
-        html += `<div style="border:2px solid ${color};border-radius:10px;margin-bottom:14px;overflow:hidden">
-            <div style="background:${bg};padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-                <div>
-                    <span style="font-weight:700;font-size:14px">${icono} Pedido ${idx+1} — ${label}</span>
-                    <span style="color:#718096;font-size:12px;margin-left:10px">
-                        Pedir: <b>${fmtF(ped.fechaPedido)}</b> (lunes) | Llega: <b>${fmtF(ped.fechaLlegadaPedido)}</b>
-                    </span>
-                </div>
-                <span style="background:${color};color:white;padding:4px 12px;border-radius:6px;font-weight:700;font-size:12px">
-                    ${ped.totalSacos} sacos ${envioGratis ? '✅ envío gratis' : '⚠️ sin envío gratis'}
-                </span>
-            </div>
-            <div style="padding:10px 16px">`;
-
-        ped.items.forEach(item => {
-            html += `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e2e8f0;font-size:13px">
-                <span>📦 <b>${item.nucleo.replace('Nucleo ','')}</b> <span style="color:#718096;font-size:11px">(necesario)</span></span>
-                <span style="font-weight:700">${item.sacos} saco(s) — ${item.kg.toFixed(0)} kg</span>
-            </div>`;
-        });
-
-        ped.adelantos.forEach(adel => {
-            html += `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e2e8f0;font-size:13px;background:#fffbea">
-                <span>⏩ <b>${adel.nucleo.replace('Nucleo ','')}</b> <span style="color:#e67e22;font-size:11px">(adelantado para envío gratis)</span></span>
-                <span style="font-weight:700;color:#e67e22">${adel.sacos} saco(s) — ${(adel.sacos*adel.kgPorSaco).toFixed(0)} kg</span>
-            </div>`;
-        });
-
-        if (!envioGratis) {
-            html += `<div style="background:#fff3cd;padding:7px 10px;border-radius:6px;margin-top:8px;font-size:12px">
-                ⚠️ Solo ${ped.totalSacos} sacos — considera si vale la pena pagar envío o combinar con el siguiente pedido
-            </div>`;
-        }
-
-        html += `</div></div>`;
-    });
-
-    div.innerHTML = html;
-}
-
-
-function renderProyeccionNucleos() {
-    const div = document.getElementById('proyeccionNucleos');
-    if (!div) return;
-
-    const lotesPato = [...lotesActivos(), ...lotesFuturos()].filter(l => (l.especie||'').toLowerCase().includes('pato'));
-    if (!lotesPato.length) { div.innerHTML = '<p style="color:#718096">Sin lotes de patos. Sincroniza.</p>'; return; }
-    if (!DB.curva.length) { div.innerHTML = '<p style="color:#718096">Sincroniza primero.</p>'; return; }
-
-    const ETAPAS = [
-        { nombre: 'Inicio',      semIni: 2, semFin: 3,  nucleo: 'Nucleo Pato Inicio',      formula: 'Pato Inicio' },
-        { nombre: 'Crecimiento', semIni: 4, semFin: 7,  nucleo: 'Nucleo Pato Crecimiento', formula: 'Pato Crecimiento' },
-        { nombre: 'Acabado',     semIni: 8, semFin: 12, nucleo: 'Nucleo Pato Acabado',     formula: 'Pato Acabado' }
-    ];
-
-    const hoyDate = new Date(hoy() + 'T00:00:00');
-    const recetas = getRecetas();
-
-    // Stock actual por núcleo (compartido entre lotes)
-    const stockNucleos = {};
-    ETAPAS.forEach(e => {
-        stockNucleos[e.nucleo] = getStock(e.nucleo) || getStock(e.nucleo.replace('Nucleo ','Núcleo '));
-    });
-
-    // Necesidad consolidada por núcleo (todos los lotes)
-    const necesidadTotal = { 'Nucleo Pato Inicio': 0, 'Nucleo Pato Crecimiento': 0, 'Nucleo Pato Acabado': 0 };
-
-    // Calcular necesidad por lote
-    const datosLotes = lotesPato.map(l => {
-        const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
-        const esFuturo = diaF(l.fechaLlegada) < 1;
-
-        const etapasLote = ETAPAS.map(etapa => {
-            const diaIniEtapa = (etapa.semIni - 1) * 7;
-            const diaFinEtapa = etapa.semFin * 7 - 1;
-            const fechaIni = new Date(fechaLlegada.getTime() + diaIniEtapa * 86400000);
-            const fechaFin = new Date(fechaLlegada.getTime() + diaFinEtapa * 86400000);
-
-            // Solo contar días restantes desde hoy
-            const diaIniEfectivo = hoyDate > fechaIni ? hoyDate : fechaIni;
-            const diasRestantes = fechaFin >= hoyDate
-                ? Math.floor((fechaFin - diaIniEfectivo) / 86400000) + 1
-                : 0;
-
-            // Estado de la etapa
-            let estado;
-            if (fechaFin < hoyDate) estado = 'completada';
-            else if (fechaIni <= hoyDate) estado = 'en_curso';
-            else estado = 'proxima';
-
-            // Consumo diario promedio de la etapa
-            let consumoDiaProm = 0;
-            for (let s = etapa.semIni; s <= etapa.semFin; s++) {
-                const curvaS = DB.curva.find(c => c.semana == s) || DB.curva[0];
-                if (curvaS) consumoDiaProm += (curvaS.patoMacho + curvaS.patoHembra) / 2 / 7;
-            }
-            consumoDiaProm /= (etapa.semFin - etapa.semIni + 1);
-
-            // Kg de alimento restantes en esta etapa
-            const kgAlimento = l.cantidad * consumoDiaProm * diasRestantes;
-
-            // Kg de núcleo necesarios
-            const receta = recetas[etapa.formula] || {};
-            const kgNucleoReceta = receta[etapa.nucleo] || receta[etapa.nucleo.replace('Nucleo ','Núcleo ')] || 0;
-            const kgNucleo = kgNucleoReceta > 0 ? (kgNucleoReceta / 500) * kgAlimento : 0;
-            const kgPorSaco = NUCLEOS_KG[etapa.nucleo] || 10;
-
-            if (estado !== 'completada') {
-                necesidadTotal[etapa.nucleo] = (necesidadTotal[etapa.nucleo] || 0) + kgNucleo;
-            }
-
-            return {
-                ...etapa,
-                fechaIni: fechaIni.toISOString().split('T')[0],
-                fechaFin: fechaFin.toISOString().split('T')[0],
-                diasRestantes,
-                kgNucleo,
-                sacos: kgNucleo / kgPorSaco,
-                kgPorSaco,
-                estado
-            };
-        });
-
-        return { lote: l, esFuturo, etapas: etapasLote };
-    });
-
-    // ===== RENDER =====
-    let html = '';
-
-    // Tabla por lote
-    datosLotes.forEach(({ lote, esFuturo, etapas }) => {
-        const borderColor = esFuturo ? '#9b59b6' : '#3498db';
-        const etiqueta = esFuturo
-            ? `<span style="background:#9b59b6;color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">FUTURO</span>`
-            : `<span style="background:#3498db;color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">ACTIVO</span>`;
-
-        html += `<div style="border-left:4px solid ${borderColor};padding:14px;background:#f7fafc;border-radius:8px;margin-bottom:16px">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-                <b style="font-size:15px">🦆 ${lote.id}</b> ${etiqueta}
-                <span style="color:#718096;font-size:12px">${lote.cantidad} animales | Llegada: ${lote.fechaLlegada}</span>
-            </div>
-            <table style="width:100%;border-collapse:collapse;font-size:13px">
-                <thead>
-                    <tr style="background:#e2e8f0">
-                        <th style="padding:8px;text-align:left">Etapa</th>
-                        <th style="padding:8px;text-align:left">Núcleo</th>
-                        <th style="padding:8px;text-align:center">Semanas</th>
-                        <th style="padding:8px;text-align:center">Hasta</th>
-                        <th style="padding:8px;text-align:right">Días restantes</th>
-                        <th style="padding:8px;text-align:right">Kg núcleo</th>
-                        <th style="padding:8px;text-align:right">Sacos</th>
-                    </tr>
-                </thead>
-                <tbody>`;
-
-        etapas.forEach(e => {
-            let estadoLabel = '';
-            if (e.estado === 'completada') estadoLabel = '<span style="color:#718096;font-size:11px">✓ Completada</span>';
-            else if (e.estado === 'en_curso') estadoLabel = '<span style="color:#27ae60;font-size:11px;font-weight:700">▶ En curso</span>';
-            else estadoLabel = '<span style="color:#3498db;font-size:11px">◷ Próxima</span>';
-
-            const colorKg = e.estado === 'completada' ? '#718096' : e.kgNucleo > 0 ? '#2d3748' : '#718096';
-            const rowBg = e.estado === 'completada' ? 'opacity:0.5' : '';
-
-            html += `<tr style="border-bottom:1px solid #e2e8f0;${rowBg}">
-                <td style="padding:8px">${e.nombre} ${estadoLabel}</td>
-                <td style="padding:8px;color:#718096">${e.nucleo.replace('Nucleo ','')}</td>
-                <td style="padding:8px;text-align:center">S${e.semIni}–S${e.semFin}</td>
-                <td style="padding:8px;text-align:center;font-size:12px;color:#718096">${e.fechaFin}</td>
-                <td style="padding:8px;text-align:right;color:#718096">${e.estado === 'completada' ? '—' : e.diasRestantes + 'd'}</td>
-                <td style="padding:8px;text-align:right;font-weight:700;color:${colorKg}">${e.estado === 'completada' ? '—' : e.kgNucleo.toFixed(1) + ' kg'}</td>
-                <td style="padding:8px;text-align:right">${e.estado === 'completada' ? '—' : e.sacos.toFixed(1)}</td>
-            </tr>`;
-        });
-
-        html += `</tbody></table></div>`;
-    });
-
-    // ===== RESUMEN CONSOLIDADO =====
-    html += `<div style="background:#1a202c;color:white;padding:16px;border-radius:10px;margin-top:8px">
-        <div style="font-size:14px;font-weight:700;margin-bottom:12px">📦 Resumen consolidado — todos los lotes</div>
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-            <thead>
-                <tr style="border-bottom:1px solid #4a5568">
-                    <th style="padding:8px;text-align:left;color:#a0aec0">Núcleo</th>
-                    <th style="padding:8px;text-align:right;color:#a0aec0">Stock actual</th>
-                    <th style="padding:8px;text-align:right;color:#a0aec0">Total necesario</th>
-                    <th style="padding:8px;text-align:right;color:#a0aec0">Faltante</th>
-                    <th style="padding:8px;text-align:right;color:#a0aec0">Sacos a comprar</th>
-                </tr>
-            </thead>
-            <tbody>`;
-
-    ETAPAS.forEach(e => {
-        const stock = stockNucleos[e.nucleo] || 0;
-        const necesario = necesidadTotal[e.nucleo] || 0;
-        const faltante = Math.max(0, necesario - stock);
-        const sacosComprar = Math.ceil(faltante / (NUCLEOS_KG[e.nucleo] || 10));
-        const color = faltante > 0 ? '#fc8181' : '#68d391';
-        const icono = faltante > 0 ? '🔴' : '✅';
-
-        html += `<tr style="border-bottom:1px solid #2d3748">
-            <td style="padding:8px;font-weight:600">${icono} ${e.nucleo.replace('Nucleo ','')}</td>
-            <td style="padding:8px;text-align:right;color:#68d391">${stock.toFixed(1)} kg (${(stock/(NUCLEOS_KG[e.nucleo]||10)).toFixed(1)} sacos)</td>
-            <td style="padding:8px;text-align:right;color:#a0aec0">${necesario.toFixed(1)} kg</td>
-            <td style="padding:8px;text-align:right;color:${color};font-weight:700">${faltante > 0 ? faltante.toFixed(1)+' kg' : '—'}</td>
-            <td style="padding:8px;text-align:right;color:${color};font-weight:700">${faltante > 0 ? sacosComprar+' saco(s)' : 'OK'}</td>
-        </tr>`;
-    });
-
-    html += `</tbody></table>
-        <div style="font-size:11px;color:#718096;margin-top:8px">* Considera días restantes de etapas en curso + etapas futuras de todos los lotes</div>
-    </div>`;
-
-    div.innerHTML = html;
-}
-
-
-
-function renderCalendarioPedidos() {
-    const div = document.getElementById('calendarioPedidos');
-    if (!div) return;
-
-    const lotesPato = [...lotesActivos(), ...lotesFuturos()].filter(l => (l.especie||'').toLowerCase().includes('pato'));
-    if (!lotesPato.length || !DB.curva.length) {
-        div.innerHTML = '<p style="color:#718096">Sin lotes. Sincroniza.</p>';
-        return;
-    }
-
-    const NUCLEOS_INFO = [
-        { nucleo: 'Nucleo Pato Inicio',      formula: 'Pato Inicio',      semIni: 2, semFin: 3,  kgPorSaco: 10 },
-        { nucleo: 'Nucleo Pato Crecimiento', formula: 'Pato Crecimiento', semIni: 4, semFin: 7,  kgPorSaco: 10 },
-        { nucleo: 'Nucleo Pato Acabado',     formula: 'Pato Acabado',     semIni: 8, semFin: 12, kgPorSaco: 10 }
-    ];
 
     const hoyDate = new Date(hoy() + 'T00:00:00');
     const recetas = getRecetas();
@@ -2162,7 +1821,7 @@ function renderCalendarioPedidos() {
 
     // Construir timeline de necesidades: { fecha, nucleo, kg, loteId }
     const timeline = [];
-    lotesPato.forEach(l => {
+    todosLotesCal.forEach(l => {
         const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
         NUCLEOS_INFO.forEach(ni => {
             const diaIni = (ni.semIni - 1) * 7;
@@ -2248,6 +1907,7 @@ function renderCalendarioPedidos() {
         let totalSacos = 0;
 
         NUCLEOS_INFO.forEach(ni => {
+            // Solo calcular para lotes de la especie correcta
             const necesario = necesidadVentana[ni.nucleo] || 0;
             if (necesario <= 0) return;
             const stockDisp = Math.max(0, (stockSimulado[ni.nucleo] || 0) - (yaAdelantado[ni.nucleo] || 0));
