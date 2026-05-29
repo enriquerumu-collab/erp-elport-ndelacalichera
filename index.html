@@ -716,78 +716,31 @@ function renderPlanPorLote(cont, lotes) {
 
 function renderPlanGrafico(cont, lotes) {
     cont.innerHTML = `<div class="card"><div class="card-header">📉 Consumo semanal por lote</div>
-        <div class="chart-container" style="height:400px"><canvas id="chartPlan"></canvas></div>
+        <div class="chart-container" style="height:420px"><canvas id="chartPlan"></canvas></div>
     </div>`;
 
     setTimeout(() => {
         const ctx = document.getElementById('chartPlan');
         if (!ctx) return;
-
-        // Cada lote tiene sus propias semanas (desde su fecha de llegada)
-        // Para el gráfico consolidado usamos semanas del PRIMER lote como eje X
-        // y mapeamos los otros lotes a esas semanas por solapamiento de fechas
-
         if (!lotes.length) return;
 
-        // Encontrar rango total de fechas
-        let fechaMin = null, fechaMax = null;
-        lotes.forEach(l => {
-            const fi = new Date(l.fechaLlegada + 'T00:00:00');
-            const sems = calcProyeccionLote(l);
-            if (!sems.length) return;
-            const ff = new Date(sems[sems.length-1].fechaFin + 'T00:00:00');
-            if (!fechaMin || fi < fechaMin) fechaMin = fi;
-            if (!fechaMax || ff > fechaMax) fechaMax = ff;
-        });
-        if (!fechaMin) return;
+        // Calcular semanas propias de cada lote
+        const semsXLote = lotes.map(l => calcProyeccionLote(l));
 
-        // Construir eje unificando las semanas de TODOS los lotes
-        // Cada lote aporta sus propias fechas de inicio de semana
-        const fechasInicioSet = new Set();
-        lotes.forEach(l => {
-            calcProyeccionLote(l).forEach(s => fechasInicioSet.add(s.fechaIni));
-        });
-        const semanasEje = Array.from(fechasInicioSet).sort().map(fechaIni => {
-            const iniDate = new Date(fechaIni + 'T00:00:00');
-            const finDate = new Date(iniDate.getTime() + 6*86400000);
-            return {
-                ini: fechaIni,
-                fin: finDate.toISOString().split('T')[0],
-                iniDate,
-                finDate
-            };
-        });
+        // Recopilar TODAS las fechaIni únicas de todos los lotes, ordenadas
+        const todasFechasSet = new Set();
+        semsXLote.forEach(sems => sems.forEach(s => todasFechasSet.add(s.fechaIni)));
+        const todasFechas = Array.from(todasFechasSet).sort();
 
-        const hoyStr = hoy();
+        // Para cada fecha del eje, cada lote busca su semana exacta
         const colors = ['#3498db','#9b59b6','#e67e22','#e74c3c','#27ae60','#1abc9c'];
 
         const datasets = lotes.map((l, i) => {
-            const semsLote = calcProyeccionLote(l);
-            // Usar directamente las semanas propias del lote (7 días exactos desde llegada)
-            // y mapearlas al índice del eje por fecha de inicio
-            const data = semanasEje.map(sem => {
-                // Buscar la semana del lote que coincide exactamente con esta posición del eje
-                // usando las semanas propias del lote (cada una es 7 días desde su llegada)
-                const sl = semsLote.find(s => s.fechaIni === sem.ini);
-                if (sl) return sl.kgSem; // semana completa exacta
-                // Si no hay coincidencia exacta, buscar si hay solapamiento
-                // pero solo para el primer y último período (transición entre lotes)
-                const semIniDate = sem.iniDate;
-                const semFinDate = sem.finDate;
-                let kgTotal = 0;
-                semsLote.forEach(s => {
-                    const sIni = new Date(s.fechaIni + 'T00:00:00');
-                    const sFin = new Date(s.fechaFin + 'T00:00:00');
-                    const solIni = sIni > semIniDate ? sIni : semIniDate;
-                    const solFin = sFin < semFinDate ? sFin : semFinDate;
-                    if (solIni > solFin) return;
-                    const dias = Math.floor((solFin - solIni)/86400000) + 1;
-                    if (dias >= 7) kgTotal += s.kgSem; // semana completa
-                    else if (dias >= 3) kgTotal += s.kgDia * dias; // parcial solo si ≥3 días
-                });
-                return parseFloat(kgTotal.toFixed(1));
+            const semsLote = semsXLote[i];
+            const data = todasFechas.map(fecha => {
+                const s = semsLote.find(x => x.fechaIni === fecha);
+                return s ? s.kgSem : 0;
             });
-
             const esCerdo = (l.especie||'').toLowerCase().includes('cerdo');
             return {
                 label: (esCerdo?'🐷':'🦆') + ' ' + l.id + ' (' + l.cantidad + ')',
@@ -799,9 +752,9 @@ function renderPlanGrafico(cont, lotes) {
             };
         });
 
-        // Línea total
-        const totales = semanasEje.map((_, si) =>
-            parseFloat(datasets.reduce((sum, ds) => sum + (ds.data[si]||0), 0).toFixed(1))
+        // Línea total — suma de todos los lotes para cada fecha
+        const totales = todasFechas.map((fecha, fi) =>
+            parseFloat(datasets.reduce((sum, ds) => sum + (ds.data[fi]||0), 0).toFixed(1))
         );
         datasets.push({
             label: 'Total',
@@ -816,14 +769,19 @@ function renderPlanGrafico(cont, lotes) {
             order: 0
         });
 
-        // Labels: S1 09/05, S2 16/05...
-        const labels = semanasEje.map((s,i) => {
-            const d = s.iniDate;
+        // Labels: S1 05/09, S2 05/16... numerados globalmente
+        const labels = todasFechas.map((f, i) => {
+            const d = new Date(f + 'T00:00:00');
             return 'S'+(i+1)+' '+(d.getMonth()+1).toString().padStart(2,'0')+'/'+d.getDate().toString().padStart(2,'0');
         });
 
-        // Línea vertical de HOY
-        const hoyIdx = semanasEje.findIndex(s => s.ini <= hoyStr && s.fin >= hoyStr);
+        // Marcar semana actual
+        const hoyStr = hoy();
+        const hoyIdx = todasFechas.findIndex(f => {
+            const fi = new Date(f + 'T00:00:00');
+            const ff = new Date(fi.getTime() + 6*86400000);
+            return f <= hoyStr && ff.toISOString().split('T')[0] >= hoyStr;
+        });
 
         new Chart(ctx, {
             type: 'bar',
@@ -835,21 +793,16 @@ function renderPlanGrafico(cont, lotes) {
                     legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
                     tooltip: {
                         mode: 'index',
-                        callbacks: { label: c => c.dataset.label + ': ' + c.parsed.y.toFixed(0) + ' kg' }
-                    },
-                    annotation: hoyIdx >= 0 ? {
-                        annotations: {
-                            hoy: {
-                                type: 'line',
-                                xMin: hoyIdx,
-                                xMax: hoyIdx,
-                                borderColor: '#27ae60',
-                                borderWidth: 2,
-                                borderDash: [4,4],
-                                label: { content: 'Hoy', display: true, position: 'start', color: '#27ae60', font: { size: 10 } }
-                            }
+                        callbacks: {
+                            title: (items) => {
+                                const idx = items[0].dataIndex;
+                                const fecha = todasFechas[idx];
+                                const fin = new Date(new Date(fecha+'T00:00:00').getTime()+6*86400000).toISOString().split('T')[0];
+                                return labels[idx] + ' (' + fecha + ' → ' + fin + ')';
+                            },
+                            label: c => c.dataset.label + ': ' + c.parsed.y.toFixed(0) + ' kg'
                         }
-                    } : {}
+                    }
                 },
                 scales: {
                     x: { stacked: true, ticks: { font: { size: 10 } } },
