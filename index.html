@@ -119,6 +119,7 @@
         <a data-view="finanzas" onclick="navegar('finanzas',this)">📈 <span>Finanzas</span></a>
         <a data-view="lotes" onclick="navegar('lotes',this)">🦆 <span>Lotes</span></a>
         <a data-view="compras" onclick="navegar('compras',this)">🛒 <span>Compras</span></a>
+        <a data-view="planificacion" onclick="navegar('planificacion',this)">📈 <span>Planificación</span></a>
         <a data-view="preparar" onclick="navegar('preparar',this)">🥣 <span>Preparar</span></a>
         <a data-view="ventas" onclick="navegar('ventas',this)">💰 <span>Ventas</span></a>
         <a data-view="clientes" onclick="navegar('clientes',this)">👥 <span>Clientes</span></a>
@@ -142,7 +143,7 @@
 <div id="modalContainer"></div>
 
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbxs3MzDYtoMDRLJesXO7L3S95V4QeYsVpl_95y1Jo7Hh_v2FMOS75Kj9HU5LrrPHGESCQ/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbzgb21ruwDt26pj5utoBifr0Bp_5fFW6Vtmnmpnkzvr0lwa87PI9lzODVnApBpnbjf1Hw/exec';
 
 let DB = {
     lotes: [], curva: [], protocolos: [], stock: [],
@@ -396,9 +397,9 @@ function renderizar(view) {
     vistaActual = view;
     const m = document.getElementById('mainContent');
     if(!m) return;
-    const vistas = { dashboard:vDashboard, finanzas:vFinanzas, lotes:vLotes, compras:vCompras, preparar:vPreparar, ventas:vVentas, clientes:vClientes, nevera:vNevera, gastos:vGastos, mortalidad:vMortalidad, tickets:vTickets, stock:vStock };
+    const vistas = { dashboard:vDashboard, finanzas:vFinanzas, lotes:vLotes, compras:vCompras, planificacion:vPlanificacion, preparar:vPreparar, ventas:vVentas, clientes:vClientes, nevera:vNevera, gastos:vGastos, mortalidad:vMortalidad, tickets:vTickets, stock:vStock };
     m.innerHTML = (vistas[view]||vDashboard)();
-    const inits = { dashboard:initDashboard, finanzas:initFinanzas, lotes:initLotes, compras:initCompras, ventas:initVentas, clientes:initClientes, mortalidad:initMortalidad, tickets:initTickets, gastos:initGastos };
+    const inits = { dashboard:initDashboard, finanzas:initFinanzas, lotes:initLotes, compras:initCompras, planificacion:initPlanificacion, ventas:initVentas, clientes:initClientes, mortalidad:initMortalidad, tickets:initTickets, gastos:initGastos };
     if (inits[view]) setTimeout(inits[view], 80);
 }
 
@@ -427,6 +428,347 @@ async function regularizarConsumo() {
 function lotesActivos() { return DB.lotes.filter(l => diaF(l.fechaLlegada) >= 1); }
 function lotesFuturos() { return DB.lotes.filter(l => diaF(l.fechaLlegada) < 1); }
 function diasParaLlegada(f) { return Math.abs(diaF(f)) + 1; }
+
+
+// ============ PLANIFICACIÓN ============
+function vPlanificacion() {
+    return `${topbarHTML('📈 Planificación')}
+    <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <span style="font-weight:600;font-size:14px">Lotes a incluir:</span>
+            <div id="planLotesCheck" style="display:flex;gap:12px;flex-wrap:wrap"></div>
+        </div>
+    </div>
+    <div class="tab-bar">
+        <div class="tab active" onclick="tabPlan('consolidado',this)">📊 Consolidado</div>
+        <div class="tab" onclick="tabPlan('porLote',this)">🦆 Por lote</div>
+        <div class="tab" onclick="tabPlan('grafico',this)">📉 Gráfico</div>
+    </div>
+    <div id="planContent"></div>`;
+}
+
+function initPlanificacion() {
+    // Renderizar checkboxes de lotes
+    const cont = document.getElementById('planLotesCheck');
+    if (!cont) return;
+    const todosLotes = [...lotesActivos(), ...lotesFuturos()].filter(l => (l.especie||'').toLowerCase().includes('pato'));
+    cont.innerHTML = todosLotes.map((l,i) => {
+        const esFuturo = diaF(l.fechaLlegada) < 1;
+        return `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;background:${esFuturo?'#f3e8ff':'#e8f4fd'};border-radius:8px;font-size:13px;font-weight:600">
+            <input type="checkbox" id="planChk_${i}" checked onchange="renderPlanificacion()" style="width:auto;margin:0">
+            ${esFuturo?'🟣':'🔵'} ${l.id} <span style="font-weight:400;color:#718096">(${l.cantidad})</span>
+        </label>`;
+    }).join('');
+    window._planTab = 'consolidado';
+    renderPlanificacion();
+}
+
+function tabPlan(tab, el) {
+    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    window._planTab = tab;
+    renderPlanificacion();
+}
+
+function getLotesSeleccionadosPlan() {
+    const todosLotes = [...lotesActivos(), ...lotesFuturos()].filter(l => (l.especie||'').toLowerCase().includes('pato'));
+    return todosLotes.filter((l,i) => {
+        const chk = document.getElementById(`planChk_${i}`);
+        return chk ? chk.checked : true;
+    });
+}
+
+function calcProyeccionLote(lote) {
+    // Devuelve array de semanas con datos de consumo
+    const fechaLlegada = new Date(lote.fechaLlegada + 'T00:00:00');
+    const semanas = [];
+    const TOTAL_SEMS = 12;
+
+    for (let s = 1; s <= TOTAL_SEMS; s++) {
+        const diaIni = (s-1)*7;
+        const diaFin = s*7-1;
+        const fechaIni = new Date(fechaLlegada.getTime() + diaIni*86400000);
+        const fechaFin = new Date(fechaLlegada.getTime() + diaFin*86400000);
+        const formula = getFormula(lote.especie, s);
+        const curvaS = DB.curva.find(c => c.semana == s) || DB.curva[DB.curva.length-1];
+        if (!curvaS) continue;
+
+        const sexo = lote.sexo || '';
+        let kgDiaPorAnimal;
+        if (sexo === 'M') kgDiaPorAnimal = curvaS.patoMacho / 7;
+        else if (sexo === 'H') kgDiaPorAnimal = curvaS.patoHembra / 7;
+        else kgDiaPorAnimal = (curvaS.patoMacho + curvaS.patoHembra) / 2 / 7;
+
+        const kgDia = lote.cantidad * kgDiaPorAnimal;
+        const kgSem = kgDia * 7;
+
+        const hoyDate = new Date(hoy() + 'T00:00:00');
+        let estado;
+        if (fechaFin < hoyDate) estado = 'pasada';
+        else if (fechaIni <= hoyDate) estado = 'en_curso';
+        else estado = 'proxima';
+
+        semanas.push({
+            sem: s,
+            fechaIni: fechaIni.toISOString().split('T')[0],
+            fechaFin: fechaFin.toISOString().split('T')[0],
+            formula,
+            kgDia: parseFloat(kgDia.toFixed(2)),
+            kgSem: parseFloat(kgSem.toFixed(2)),
+            estado,
+            cantidad: lote.cantidad
+        });
+    }
+    return semanas;
+}
+
+function renderPlanificacion() {
+    const cont = document.getElementById('planContent');
+    if (!cont) return;
+    const tab = window._planTab || 'consolidado';
+    const lotes = getLotesSeleccionadosPlan();
+
+    if (!lotes.length) {
+        cont.innerHTML = '<div class="card"><p style="color:#718096">Selecciona al menos un lote</p></div>';
+        return;
+    }
+
+    if (tab === 'consolidado') renderPlanConsolidado(cont, lotes);
+    else if (tab === 'porLote') renderPlanPorLote(cont, lotes);
+    else renderPlanGrafico(cont, lotes);
+}
+
+function renderPlanConsolidado(cont, lotes) {
+    // Construir mapa de semanas por fecha
+    const mapaFechas = {};
+    lotes.forEach(l => {
+        const sems = calcProyeccionLote(l);
+        sems.forEach(s => {
+            const key = s.fechaIni;
+            if (!mapaFechas[key]) mapaFechas[key] = { fechaIni: s.fechaIni, fechaFin: s.fechaFin, lotes: {}, totalDia: 0, totalSem: 0 };
+            mapaFechas[key].lotes[l.id] = s;
+            mapaFechas[key].totalDia += s.kgDia;
+            mapaFechas[key].totalSem += s.kgSem;
+        });
+    });
+
+    const semanas = Object.values(mapaFechas).sort((a,b) => a.fechaIni.localeCompare(b.fechaIni));
+    const hoyStr = hoy();
+
+    let html = `<div class="card" style="overflow-x:auto"><table style="min-width:600px">
+        <thead><tr style="background:#f7fafc">
+            <th style="padding:10px;text-align:left">Semana</th>
+            <th style="padding:10px;text-align:left">Fechas</th>
+            ${lotes.map(l=>`<th style="padding:10px;text-align:center;font-size:12px">${l.id}<br><span style="font-weight:400;color:#718096">${l.cantidad} anim.</span></th>`).join('')}
+            <th style="padding:10px;text-align:right;color:#27ae60">kg/día total</th>
+            <th style="padding:10px;text-align:right;color:#27ae60">kg/semana total</th>
+        </tr></thead><tbody>`;
+
+    semanas.forEach((sem, idx) => {
+        const esCurso = sem.fechaIni <= hoyStr && sem.fechaFin >= hoyStr;
+        const esPasada = sem.fechaFin < hoyStr;
+        const rowBg = esCurso ? 'background:#f0fff4;' : esPasada ? 'opacity:0.5;' : '';
+        const cursoBadge = esCurso ? ' <span style="background:#27ae60;color:white;padding:1px 6px;border-radius:4px;font-size:10px">HOY</span>' : '';
+
+        html += `<tr style="border-bottom:1px solid #e2e8f0;${rowBg}">
+            <td style="padding:10px;font-weight:700">S${idx+1}${cursoBadge}</td>
+            <td style="padding:10px;font-size:12px;color:#718096">${sem.fechaIni}<br>${sem.fechaFin}</td>`;
+
+        lotes.forEach(l => {
+            const dato = sem.lotes[l.id];
+            if (dato) {
+                const colorFormula = dato.formula === 'Corimicyn' ? '#9b59b6' :
+                    dato.formula.includes('Inicio') ? '#3498db' :
+                    dato.formula.includes('Crecimiento') ? '#e67e22' : '#e74c3c';
+                html += `<td style="padding:10px;text-align:center">
+                    <span style="font-size:11px;background:${colorFormula}20;color:${colorFormula};padding:2px 6px;border-radius:4px;display:block;margin-bottom:4px">${dato.formula.replace('Pato ','').replace('Cerdo ','')}</span>
+                    <b>${dato.kgDia}</b> kg/d<br>
+                    <span style="color:#718096;font-size:11px">${dato.kgSem} kg/sem</span>
+                </td>`;
+            } else {
+                html += `<td style="padding:10px;text-align:center;color:#e2e8f0">—</td>`;
+            }
+        });
+
+        const colorTotal = sem.totalDia > 60 ? '#e74c3c' : sem.totalDia > 40 ? '#e67e22' : '#27ae60';
+        html += `<td style="padding:10px;text-align:right;font-weight:700;color:${colorTotal}">${sem.totalDia.toFixed(1)} kg</td>
+            <td style="padding:10px;text-align:right;font-weight:700;color:${colorTotal}">${sem.totalSem.toFixed(1)} kg</td>
+        </tr>`;
+    });
+
+    // Totales por etapa consolidados
+    const totalesFormula = {};
+    lotes.forEach(l => {
+        calcProyeccionLote(l).forEach(s => {
+            if (s.estado === 'pasada') return;
+            totalesFormula[s.formula] = (totalesFormula[s.formula]||0) + s.kgSem;
+        });
+    });
+
+    html += `</tbody></table></div>`;
+
+    // Resumen por fórmula
+    html += `<div class="card"><div class="card-header">📋 Totales restantes por fórmula — todos los lotes</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">`;
+    const formulaColors = { 'Corimicyn':'#9b59b6','Pato Inicio':'#3498db','Pato Crecimiento':'#e67e22','Pato Acabado':'#e74c3c','Cerdo Inicio':'#1abc9c','Cerdo Crecimiento':'#f39c12','Cerdo Desarrollo':'#8e44ad','Cerdo Acabado':'#c0392b' };
+    let totalGeneral = 0;
+    Object.entries(totalesFormula).forEach(([formula, kg]) => {
+        totalGeneral += kg;
+        const color = formulaColors[formula] || '#718096';
+        html += `<div style="background:${color}15;border-left:4px solid ${color};padding:12px;border-radius:8px">
+            <div style="font-size:12px;color:${color};font-weight:700">${formula}</div>
+            <div style="font-size:20px;font-weight:700;margin-top:4px">${kg.toFixed(0)} kg</div>
+            <div style="font-size:11px;color:#718096">${(kg/7).toFixed(0)} kg/día prom.</div>
+        </div>`;
+    });
+    html += `<div style="background:#1a202c;border-left:4px solid #27ae60;padding:12px;border-radius:8px;color:white">
+        <div style="font-size:12px;color:#68d391;font-weight:700">TOTAL CICLO</div>
+        <div style="font-size:20px;font-weight:700;margin-top:4px">${totalGeneral.toFixed(0)} kg</div>
+        <div style="font-size:11px;color:#a0aec0">alimento restante</div>
+    </div>`;
+    html += `</div></div>`;
+
+    cont.innerHTML = html;
+}
+
+function renderPlanPorLote(cont, lotes) {
+    let html = '';
+    lotes.forEach(l => {
+        const esFuturo = diaF(l.fechaLlegada) < 1;
+        const sems = calcProyeccionLote(l);
+        const hoyStr = hoy();
+        const borderColor = esFuturo ? '#9b59b6' : '#3498db';
+
+        html += `<div class="card" style="border-left:4px solid ${borderColor}">
+            <div class="card-header">
+                🦆 ${l.id} 
+                <span style="background:${borderColor};color:white;padding:2px 8px;border-radius:4px;font-size:11px">${esFuturo?'FUTURO':'ACTIVO'}</span>
+                <span style="font-size:13px;font-weight:400;color:#718096">${l.cantidad} animales | Llegada: ${l.fechaLlegada}</span>
+            </div>
+            <div style="overflow-x:auto"><table style="min-width:500px">
+                <thead><tr style="background:#f7fafc">
+                    <th style="padding:8px">Semana</th>
+                    <th style="padding:8px">Fechas</th>
+                    <th style="padding:8px">Fórmula</th>
+                    <th style="padding:8px;text-align:right">kg/día</th>
+                    <th style="padding:8px;text-align:right">kg/semana</th>
+                    <th style="padding:8px;text-align:center">Estado</th>
+                </tr></thead><tbody>`;
+
+        let totalRestante = 0;
+        sems.forEach(s => {
+            const esCurso = s.fechaIni <= hoyStr && s.fechaFin >= hoyStr;
+            const esPasada = s.estado === 'pasada';
+            const rowBg = esCurso ? 'background:#f0fff4' : esPasada ? 'opacity:0.5' : '';
+            if (!esPasada) totalRestante += s.kgSem;
+
+            const estadoLabel = esPasada ? '<span style="color:#718096;font-size:11px">✓ Pasada</span>' :
+                esCurso ? '<span style="color:#27ae60;font-size:11px;font-weight:700">▶ En curso</span>' :
+                '<span style="color:#3498db;font-size:11px">◷ Próxima</span>';
+
+            const colorFormula = s.formula === 'Corimicyn' ? '#9b59b6' :
+                s.formula.includes('Inicio') ? '#3498db' :
+                s.formula.includes('Crecimiento') ? '#e67e22' : '#e74c3c';
+
+            html += `<tr style="border-bottom:1px solid #e2e8f0;${rowBg}">
+                <td style="padding:8px;font-weight:700">S${s.sem}</td>
+                <td style="padding:8px;font-size:12px;color:#718096">${s.fechaIni} → ${s.fechaFin}</td>
+                <td style="padding:8px"><span style="background:${colorFormula}20;color:${colorFormula};padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">${s.formula}</span></td>
+                <td style="padding:8px;text-align:right;font-weight:700">${esPasada?'—':s.kgDia+' kg'}</td>
+                <td style="padding:8px;text-align:right;font-weight:700">${esPasada?'—':s.kgSem+' kg'}</td>
+                <td style="padding:8px;text-align:center">${estadoLabel}</td>
+            </tr>`;
+        });
+
+        html += `</tbody></table></div>
+            <div style="margin-top:12px;padding:10px;background:#f7fafc;border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:13px;color:#718096">Alimento restante en ciclo:</span>
+                <span style="font-size:18px;font-weight:700;color:#27ae60">${totalRestante.toFixed(0)} kg</span>
+            </div>
+        </div>`;
+    });
+    cont.innerHTML = html || '<div class="card"><p style="color:#718096">Sin lotes seleccionados</p></div>';
+}
+
+function renderPlanGrafico(cont, lotes) {
+    cont.innerHTML = `<div class="card"><div class="card-header">📉 Consumo semanal por lote</div>
+        <div class="chart-container" style="height:380px"><canvas id="chartPlan"></canvas></div>
+    </div>`;
+
+    setTimeout(() => {
+        const ctx = document.getElementById('chartPlan');
+        if (!ctx) return;
+
+        // Construir semanas únicas
+        const todasSems = [];
+        const mapaFechas = {};
+        lotes.forEach(l => {
+            calcProyeccionLote(l).forEach(s => {
+                if (!mapaFechas[s.fechaIni]) {
+                    mapaFechas[s.fechaIni] = s.fechaIni;
+                    todasSems.push(s.fechaIni);
+                }
+            });
+        });
+        todasSems.sort();
+
+        const colors = ['#3498db','#9b59b6','#e67e22','#e74c3c','#27ae60','#1abc9c'];
+        const datasets = lotes.map((l, i) => {
+            const semsLote = calcProyeccionLote(l);
+            const data = todasSems.map(fecha => {
+                const s = semsLote.find(x => x.fechaIni === fecha);
+                return s ? s.kgSem : 0;
+            });
+            return {
+                label: l.id + ' (' + l.cantidad + ')',
+                data,
+                backgroundColor: colors[i % colors.length] + '99',
+                borderColor: colors[i % colors.length],
+                borderWidth: 2,
+                borderRadius: 4
+            };
+        });
+
+        // Línea de total
+        const totales = todasSems.map(fecha => {
+            return lotes.reduce((sum, l) => {
+                const s = calcProyeccionLote(l).find(x => x.fechaIni === fecha);
+                return sum + (s ? s.kgSem : 0);
+            }, 0);
+        });
+        datasets.push({
+            label: 'Total',
+            data: totales,
+            type: 'line',
+            borderColor: '#2d3748',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [5,5],
+            pointRadius: 4,
+            tension: 0.3
+        });
+
+        // Labels cortos: "S1 09/05"
+        const labels = todasSems.map((f, i) => 'S'+(i+1)+' '+f.substring(5));
+
+        new Chart(ctx, {
+            type: 'bar',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                    tooltip: { callbacks: { label: c => c.dataset.label + ': ' + c.parsed.y.toFixed(0) + ' kg/sem' } }
+                },
+                scales: {
+                    x: { stacked: true, ticks: { font: { size: 10 } } },
+                    y: { stacked: false, ticks: { callback: v => v + ' kg' } }
+                }
+            }
+        });
+    }, 100);
+}
 
 // ============ DASHBOARD ============
 function vDashboard() {
