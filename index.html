@@ -715,8 +715,14 @@ function renderPlanPorLote(cont, lotes) {
 }
 
 function renderPlanGrafico(cont, lotes) {
-    cont.innerHTML = `<div class="card"><div class="card-header">📉 Consumo semanal por lote</div>
-        <div class="chart-container" style="height:420px"><canvas id="chartPlan"></canvas></div>
+    cont.innerHTML = `<div class="card">
+        <div class="card-header">📉 Consumo semanal por lote
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-sm ${window._planVista!=='semana'?'btn-primary':'btn-dark'}" onclick="window._planVista='fecha';renderPlanificacion()" style="font-size:11px">📅 Por fecha</button>
+                <button class="btn btn-sm ${window._planVista==='semana'?'btn-primary':'btn-dark'}" onclick="window._planVista='semana';renderPlanificacion()" style="font-size:11px">🔢 Por semana de vida</button>
+            </div>
+        </div>
+        <div class="chart-container" style="height:400px"><canvas id="chartPlan"></canvas></div>
     </div>`;
 
     setTimeout(() => {
@@ -724,92 +730,91 @@ function renderPlanGrafico(cont, lotes) {
         if (!ctx) return;
         if (!lotes.length) return;
 
-        // Calcular semanas propias de cada lote
-        const semsXLote = lotes.map(l => calcProyeccionLote(l));
-
-        // Recopilar TODAS las fechaIni únicas de todos los lotes, ordenadas
-        const todasFechasSet = new Set();
-        semsXLote.forEach(sems => sems.forEach(s => todasFechasSet.add(s.fechaIni)));
-        const todasFechas = Array.from(todasFechasSet).sort();
-
-        // Para cada fecha del eje, cada lote busca su semana exacta
+        const vistaFecha = window._planVista !== 'semana';
         const colors = ['#3498db','#9b59b6','#e67e22','#e74c3c','#27ae60','#1abc9c'];
 
-        const datasets = lotes.map((l, i) => {
-            const semsLote = semsXLote[i];
-            const data = todasFechas.map(fecha => {
-                const s = semsLote.find(x => x.fechaIni === fecha);
-                return s ? s.kgSem : 0;
+        if (vistaFecha) {
+            // Vista por fecha: eje = fechas reales del calendario
+            // Cada lote en sus propias columnas (pueden no solapar)
+            const semsXLote = lotes.map(l => calcProyeccionLote(l));
+            const todasFechasSet = new Set();
+            semsXLote.forEach(sems => sems.forEach(s => todasFechasSet.add(s.fechaIni)));
+            const todasFechas = Array.from(todasFechasSet).sort();
+
+            const datasets = lotes.map((l, i) => {
+                const semsLote = semsXLote[i];
+                const data = todasFechas.map(fecha => {
+                    const s = semsLote.find(x => x.fechaIni === fecha);
+                    return s ? s.kgSem : 0;
+                });
+                const esCerdo = (l.especie||'').toLowerCase().includes('cerdo');
+                return {
+                    label: (esCerdo?'🐷':'🦆') + ' ' + l.id + ' (' + l.cantidad + ')',
+                    data,
+                    backgroundColor: colors[i % colors.length] + 'bb',
+                    borderColor: colors[i % colors.length],
+                    borderWidth: 1, borderRadius: 3
+                };
             });
-            const esCerdo = (l.especie||'').toLowerCase().includes('cerdo');
-            return {
-                label: (esCerdo?'🐷':'🦆') + ' ' + l.id + ' (' + l.cantidad + ')',
-                data,
-                backgroundColor: colors[i % colors.length] + 'bb',
-                borderColor: colors[i % colors.length],
-                borderWidth: 1,
-                borderRadius: 3
-            };
-        });
 
-        // Línea total — suma de todos los lotes para cada fecha
-        const totales = todasFechas.map((fecha, fi) =>
-            parseFloat(datasets.reduce((sum, ds) => sum + (ds.data[fi]||0), 0).toFixed(1))
-        );
-        datasets.push({
-            label: 'Total',
-            data: totales,
-            type: 'line',
-            borderColor: '#2d3748',
-            backgroundColor: 'transparent',
-            borderWidth: 2,
-            borderDash: [5,5],
-            pointRadius: 3,
-            tension: 0.3,
-            order: 0
-        });
+            const totales = todasFechas.map((_, fi) =>
+                parseFloat(datasets.reduce((s, ds) => s + (ds.data[fi]||0), 0).toFixed(1))
+            );
+            datasets.push({ label:'Total', data:totales, type:'line', borderColor:'#2d3748',
+                backgroundColor:'transparent', borderWidth:2, borderDash:[5,5], pointRadius:3, tension:0.3, order:0 });
 
-        // Labels: S1 05/09, S2 05/16... numerados globalmente
-        const labels = todasFechas.map((f, i) => {
-            const d = new Date(f + 'T00:00:00');
-            return 'S'+(i+1)+' '+(d.getMonth()+1).toString().padStart(2,'0')+'/'+d.getDate().toString().padStart(2,'0');
-        });
+            const labels = todasFechas.map((f,i) => {
+                const d = new Date(f+'T00:00:00');
+                return 'S'+(i+1)+' '+(d.getMonth()+1).toString().padStart(2,'0')+'/'+d.getDate().toString().padStart(2,'0');
+            });
 
-        // Marcar semana actual
-        const hoyStr = hoy();
-        const hoyIdx = todasFechas.findIndex(f => {
-            const fi = new Date(f + 'T00:00:00');
-            const ff = new Date(fi.getTime() + 6*86400000);
-            return f <= hoyStr && ff.toISOString().split('T')[0] >= hoyStr;
-        });
-
-        new Chart(ctx, {
-            type: 'bar',
-            data: { labels, datasets },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-                    tooltip: {
-                        mode: 'index',
-                        callbacks: {
-                            title: (items) => {
-                                const idx = items[0].dataIndex;
-                                const fecha = todasFechas[idx];
-                                const fin = new Date(new Date(fecha+'T00:00:00').getTime()+6*86400000).toISOString().split('T')[0];
-                                return labels[idx] + ' (' + fecha + ' → ' + fin + ')';
-                            },
-                            label: c => c.dataset.label + ': ' + c.parsed.y.toFixed(0) + ' kg'
-                        }
-                    }
-                },
-                scales: {
-                    x: { stacked: true, ticks: { font: { size: 10 } } },
-                    y: { stacked: true, ticks: { callback: v => v + ' kg' } }
+            new Chart(ctx, {
+                type:'bar', data:{labels, datasets},
+                options:{ responsive:true, maintainAspectRatio:false,
+                    plugins:{ legend:{position:'bottom', labels:{boxWidth:12,font:{size:11}}},
+                        tooltip:{ mode:'index', callbacks:{
+                            title: items => labels[items[0].dataIndex],
+                            label: c => c.dataset.label+': '+c.parsed.y.toFixed(0)+' kg'
+                        }}
+                    },
+                    scales:{ x:{stacked:true,ticks:{font:{size:10}}}, y:{stacked:true,ticks:{callback:v=>v+' kg'}} }
                 }
-            }
-        });
+            });
+
+        } else {
+            // Vista por semana de vida: S1, S2... S12 en eje X
+            // Cada lote muestra su consumo en esa semana de su vida
+            const maxSems = Math.max(...lotes.map(l => calcProyeccionLote(l).length));
+            const labels = Array.from({length: maxSems}, (_, i) => 'S'+(i+1));
+
+            const datasets = lotes.map((l, i) => {
+                const semsLote = calcProyeccionLote(l);
+                const data = Array.from({length: maxSems}, (_, s) => {
+                    const sem = semsLote[s];
+                    return sem ? sem.kgSem : 0;
+                });
+                const esCerdo = (l.especie||'').toLowerCase().includes('cerdo');
+                return {
+                    label: (esCerdo?'🐷':'🦆') + ' ' + l.id + ' (' + l.cantidad + ')',
+                    data,
+                    backgroundColor: colors[i % colors.length] + 'bb',
+                    borderColor: colors[i % colors.length],
+                    borderWidth: 2, borderRadius: 3, type:'bar'
+                };
+            });
+
+            new Chart(ctx, {
+                type:'bar', data:{labels, datasets},
+                options:{ responsive:true, maintainAspectRatio:false,
+                    plugins:{ legend:{position:'bottom', labels:{boxWidth:12,font:{size:11}}},
+                        tooltip:{ mode:'index', callbacks:{
+                            label: c => c.dataset.label+': '+c.parsed.y.toFixed(0)+' kg/sem'
+                        }}
+                    },
+                    scales:{ x:{ticks:{font:{size:11}}}, y:{ticks:{callback:v=>v+' kg'}} }
+                }
+            });
+        }
     }, 100);
 }
 
@@ -1238,7 +1243,9 @@ function initDashboard() {
         data.push(cantidad);
         const esFormula = FORMULAS.includes(nom);
         if (esFormula) {
-            colors.push(cantidad < 20 ? '#e74c3c' : cantidad < 50 ? '#e67e22' : '#27ae60');
+            colors.push(cantidad < 10 ? '#e74c3c' : cantidad < 50 ? '#e67e22' : '#27ae60');
+        } else if (nom.includes('Núcleo') || nom.includes('Nucleo')) {
+            colors.push(cantidad < 10 ? '#e74c3c' : cantidad < 20 ? '#e67e22' : '#9b59b6');
         } else {
             colors.push(cantidad < 5 ? '#e74c3c' : cantidad < 20 ? '#e67e22' : '#3498db');
         }
