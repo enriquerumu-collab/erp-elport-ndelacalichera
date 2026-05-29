@@ -728,49 +728,50 @@ function renderPlanGrafico(cont, lotes) {
         });
         if (!fechaMin) return;
 
-        // Generar semanas del calendario desde fechaMin (alineadas a la llegada del primer lote)
-        const semanasEje = [];
-        let cursor = new Date(fechaMin);
-        while (cursor <= fechaMax) {
-            const ini = new Date(cursor);
-            const fin = new Date(cursor.getTime() + 6*86400000);
-            semanasEje.push({
-                ini: ini.toISOString().split('T')[0],
-                fin: fin.toISOString().split('T')[0],
-                iniDate: ini,
-                finDate: fin
-            });
-            cursor = new Date(cursor.getTime() + 7*86400000);
-        }
+        // Construir eje unificando las semanas de TODOS los lotes
+        // Cada lote aporta sus propias fechas de inicio de semana
+        const fechasInicioSet = new Set();
+        lotes.forEach(l => {
+            calcProyeccionLote(l).forEach(s => fechasInicioSet.add(s.fechaIni));
+        });
+        const semanasEje = Array.from(fechasInicioSet).sort().map(fechaIni => {
+            const iniDate = new Date(fechaIni + 'T00:00:00');
+            const finDate = new Date(iniDate.getTime() + 6*86400000);
+            return {
+                ini: fechaIni,
+                fin: finDate.toISOString().split('T')[0],
+                iniDate,
+                finDate
+            };
+        });
 
         const hoyStr = hoy();
         const colors = ['#3498db','#9b59b6','#e67e22','#e74c3c','#27ae60','#1abc9c'];
 
         const datasets = lotes.map((l, i) => {
             const semsLote = calcProyeccionLote(l);
-            const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
-
+            // Usar directamente las semanas propias del lote (7 días exactos desde llegada)
+            // y mapearlas al índice del eje por fecha de inicio
             const data = semanasEje.map(sem => {
-                // Si el lote no llegó aún en esta semana → 0
-                if (fechaLlegada > sem.finDate) return 0;
-
-                // Sumar kg de cada semana del lote que se solapa con esta semana del eje
+                // Buscar la semana del lote que coincide exactamente con esta posición del eje
+                // usando las semanas propias del lote (cada una es 7 días desde su llegada)
+                const sl = semsLote.find(s => s.fechaIni === sem.ini);
+                if (sl) return sl.kgSem; // semana completa exacta
+                // Si no hay coincidencia exacta, buscar si hay solapamiento
+                // pero solo para el primer y último período (transición entre lotes)
+                const semIniDate = sem.iniDate;
+                const semFinDate = sem.finDate;
                 let kgTotal = 0;
-                semsLote.forEach(sl => {
-                    const slIni = new Date(sl.fechaIni + 'T00:00:00');
-                    const slFin = new Date(sl.fechaFin + 'T00:00:00');
-
-                    // Inicio efectivo: máximo entre inicio del lote y inicio de la semana
-                    const efectivoIni = slIni > sem.iniDate ? slIni : sem.iniDate;
-                    // Pero nunca antes de la fecha de llegada
-                    const realIni = efectivoIni > fechaLlegada ? efectivoIni : fechaLlegada;
-                    const realFin = slFin < sem.finDate ? slFin : sem.finDate;
-
-                    if (realIni > realFin) return;
-                    const diasSolap = Math.floor((realFin - realIni) / 86400000) + 1;
-                    kgTotal += sl.kgDia * diasSolap;
+                semsLote.forEach(s => {
+                    const sIni = new Date(s.fechaIni + 'T00:00:00');
+                    const sFin = new Date(s.fechaFin + 'T00:00:00');
+                    const solIni = sIni > semIniDate ? sIni : semIniDate;
+                    const solFin = sFin < semFinDate ? sFin : semFinDate;
+                    if (solIni > solFin) return;
+                    const dias = Math.floor((solFin - solIni)/86400000) + 1;
+                    if (dias >= 7) kgTotal += s.kgSem; // semana completa
+                    else if (dias >= 3) kgTotal += s.kgDia * dias; // parcial solo si ≥3 días
                 });
-
                 return parseFloat(kgTotal.toFixed(1));
             });
 
