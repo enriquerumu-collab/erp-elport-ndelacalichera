@@ -564,10 +564,10 @@ function renderPlanificacion() {
 
 function renderPlanGrafico(cont, lotes) {
     cont.innerHTML = `<div class="card">
-        <div class="card-header">📉 Consumo semanal por lote</div>
+        <div class="card-header">📉 Consumo semanal — calendario real</div>
         <div class="chart-container" style="height:420px"><canvas id="chartPlan"></canvas></div>
         <p style="font-size:11px;color:#718096;margin-top:8px;text-align:center">
-            💡 Usa los checkboxes de arriba para ver un lote individual
+            Semanas del calendario (lunes a domingo) · barras = kg reales a preparar esa semana · 💡 usa los checkboxes para ver un lote individual
         </p>
     </div>`;
 
@@ -575,18 +575,57 @@ function renderPlanGrafico(cont, lotes) {
         const ctx = document.getElementById('chartPlan');
         if (!ctx || !lotes.length) return;
 
-        // Semanas de vida: S1..S12 (o S14 para cerdos)
-        const maxSems = Math.max(...lotes.map(l => calcProyeccionLote(l).length));
-        const labels = Array.from({length: maxSems}, (_, i) => 'S'+(i+1));
+        // Rango total: desde llegada del primer lote hasta fin del último
+        let fechaMin = null, fechaMax = null;
+        lotes.forEach(l => {
+            const fi = new Date(l.fechaLlegada + 'T00:00:00');
+            const sems = calcProyeccionLote(l);
+            if (!sems.length) return;
+            const ff = new Date(sems[sems.length-1].fechaFin + 'T00:00:00');
+            if (!fechaMin || fi < fechaMin) fechaMin = fi;
+            if (!fechaMax || ff > fechaMax) fechaMax = ff;
+        });
+        if (!fechaMin) return;
+
+        // Generar semanas del calendario desde fechaMin
+        const semanasEje = [];
+        let cursor = new Date(fechaMin);
+        while (cursor <= fechaMax) {
+            const ini = new Date(cursor);
+            const fin = new Date(cursor.getTime() + 6*86400000);
+            semanasEje.push({ ini, fin,
+                iniStr: ini.toISOString().split('T')[0],
+                label: (ini.getMonth()+1).toString().padStart(2,'0')+'/'+ini.getDate().toString().padStart(2,'0')
+            });
+            cursor = new Date(cursor.getTime() + 7*86400000);
+        }
+
         const colors = ['#3498db','#9b59b6','#e67e22','#e74c3c','#27ae60','#1abc9c'];
         const hoyStr = hoy();
 
         const datasets = lotes.map((l, i) => {
             const semsLote = calcProyeccionLote(l);
-            const data = Array.from({length: maxSems}, (_, s) => {
-                const sem = semsLote[s];
-                return sem ? sem.kgSem : 0;
+            const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
+
+            const data = semanasEje.map(sem => {
+                if (fechaLlegada > sem.fin) return 0;
+                let kg = 0;
+                semsLote.forEach(sl => {
+                    const slIni = new Date(sl.fechaIni + 'T00:00:00');
+                    const slFin = new Date(sl.fechaFin + 'T00:00:00');
+                    // Solapamiento entre semana del lote y semana del calendario
+                    const solIni = slIni > sem.ini ? slIni : sem.ini;
+                    const solFin = slFin < sem.fin ? slFin : sem.fin;
+                    if (solIni > solFin) return;
+                    // No contar días antes de llegada
+                    const efIni = solIni < fechaLlegada ? fechaLlegada : solIni;
+                    if (efIni > solFin) return;
+                    const dias = Math.floor((solFin - efIni) / 86400000) + 1;
+                    kg += sl.kgDia * dias;
+                });
+                return parseFloat(kg.toFixed(1));
             });
+
             const esCerdo = (l.especie||'').toLowerCase().includes('cerdo');
             return {
                 label: (esCerdo?'🐷':'🦆') + ' ' + l.id + ' (' + l.cantidad + ')',
@@ -594,14 +633,14 @@ function renderPlanGrafico(cont, lotes) {
                 backgroundColor: colors[i % colors.length] + 'cc',
                 borderColor: colors[i % colors.length],
                 borderWidth: 1,
-                borderRadius: 3
+                borderRadius: 2
             };
         });
 
-        // Línea de total solo si hay más de un lote
+        // Línea total si hay más de un lote
         if (lotes.length > 1) {
-            const totales = Array.from({length: maxSems}, (_, si) =>
-                parseFloat(datasets.reduce((sum, ds) => sum + (ds.data[si]||0), 0).toFixed(1))
+            const totales = semanasEje.map((_, si) =>
+                parseFloat(datasets.reduce((s, ds) => s + (ds.data[si]||0), 0).toFixed(1))
             );
             datasets.push({
                 label: 'Total',
@@ -617,20 +656,11 @@ function renderPlanGrafico(cont, lotes) {
             });
         }
 
-        // Marcar semana actual para cada lote (la que está "en curso")
-        const hoyAnnotations = {};
-        lotes.forEach((l, i) => {
-            const semActual = semF(l.fechaLlegada);
-            if (semActual >= 1 && semActual <= maxSems) {
-                hoyAnnotations['hoy'+i] = {
-                    type: 'line',
-                    xMin: semActual - 1,
-                    xMax: semActual - 1,
-                    borderColor: colors[i % colors.length],
-                    borderWidth: 2,
-                    borderDash: [3,3]
-                };
-            }
+        // Labels con fecha + marca HOY
+        const hoyIdx = semanasEje.findIndex(s => s.iniStr <= hoyStr && s.fin.toISOString().split('T')[0] >= hoyStr);
+        const labels = semanasEje.map((s, i) => {
+            const prefix = i === hoyIdx ? '▶ ' : '';
+            return prefix + 'S'+(i+1)+' '+s.label;
         });
 
         new Chart(ctx, {
@@ -644,19 +674,17 @@ function renderPlanGrafico(cont, lotes) {
                     tooltip: {
                         mode: 'index',
                         callbacks: {
-                            label: c => c.dataset.label + ': ' + c.parsed.y.toFixed(0) + ' kg/sem'
+                            title: items => {
+                                const s = semanasEje[items[0].dataIndex];
+                                return labels[items[0].dataIndex] + ' (' + s.iniStr + ' → ' + s.fin.toISOString().split('T')[0] + ')';
+                            },
+                            label: c => c.dataset.label + ': ' + c.parsed.y.toFixed(0) + ' kg'
                         }
                     }
                 },
                 scales: {
-                    x: {
-                        stacked: true,
-                        ticks: { font: { size: 11 } }
-                    },
-                    y: {
-                        stacked: lotes.length > 1,
-                        ticks: { callback: v => v + ' kg' }
-                    }
+                    x: { stacked: true, ticks: { font: { size: 10 } } },
+                    y: { stacked: true, ticks: { callback: v => v + ' kg' } }
                 }
             }
         });
