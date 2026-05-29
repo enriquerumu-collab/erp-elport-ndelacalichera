@@ -143,7 +143,7 @@
 <div id="modalContainer"></div>
 
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbxs3MzDYtoMDRLJesXO7L3S95V4QeYsVpl_95y1Jo7Hh_v2FMOS75Kj9HU5LrrPHGESCQ/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbxK-zrxS5efYyMbkb7dkiSTbBwObV1J9ez8EXhznStJL3uQrsdLzHuHZgdXqtT0S23mrQ/exec';
 
 let DB = {
     lotes: [], curva: [], protocolos: [], stock: [],
@@ -322,8 +322,21 @@ async function sincronizar() {
             if (d.protocolos && d.protocolos.length) DB.protocolos = d.protocolos;
             if (d.curva && d.curva.length) DB.curva = d.curva;
             if (d.stock && d.stock.length) {
-                // Stock viene directo de columna G->J del sheet (SUMIF ya calculado)
-                DB.stock = d.stock.map(s => ({...s, nombre: (s.nombre||'').replace('🥣 ','')}));
+                // Deduplicar por nombre (puede haber filas repetidas en col G)
+                const stockMap = {};
+                d.stock.forEach(s => {
+                    const nom = (s.nombre||'').replace('🥣 ','').trim();
+                    if (!nom) return;
+                    // Si ya existe, sumar (pueden ser filas legítimas distintas)
+                    // pero si tienen el mismo SUMIF, tomar el mayor
+                    if (stockMap[nom] === undefined) {
+                        stockMap[nom] = parseFloat(s.cantidad)||0;
+                    } else {
+                        // Mismo nombre = duplicado en col G, tomar el primero (el SUMIF correcto)
+                        // No sumar, porque el SUMIF ya suma todo
+                    }
+                });
+                DB.stock = Object.entries(stockMap).map(([nombre, cantidad]) => ({nombre, cantidad}));
             }
             if (d.gastos) DB.gastos = d.gastos.map(g => ({ ...g, fecha: normalizarFecha(g.fecha) }));
             if (d.clientes) DB.clientes = d.clientes;
@@ -1249,16 +1262,35 @@ function initDashboard() {
     const ctx = document.getElementById('graficoStock');
     if (!ctx) return;
     const FORMULAS = ['Pato Inicio','Pato Crecimiento','Pato Acabado','Cerdo Inicio','Cerdo Crecimiento','Cerdo Desarrollo','Cerdo Acabado','Corimicyn'];
-    const labels = [], data = [], colors = [];
+    const formulasActivas = new Set(lotesActivos().map(l => getFormula(l.especie, semF(l.fechaLlegada))));
+
+    // Deduplicar stock por nombre (puede haber entradas con y sin emoji del mismo insumo)
+    const stockDedup = {};
     DB.stock.forEach(s => {
-        const nombre = (s.nombre||'').replace('🥣 ','');
-        const cantidad = parseFloat(s.cantidad)||0;
-        if (cantidad <= 0) return;
-        const esFormula = FORMULAS.includes(nombre);
-        labels.push(nombre.length > 22 ? nombre.substring(0,22)+'…' : nombre);
-        data.push(cantidad);
-        colors.push(esFormula ? '#9b59b6' : cantidad < 10 ? '#e74c3c' : cantidad < 50 ? '#e67e22' : '#27ae60');
+        const nom = (s.nombre||'').replace('🥣 ','').trim();
+        if (!nom) return;
+        // Solo tomar el valor de columna G->J (el que tiene valor calculado por SUMIF)
+        // Ignorar duplicados tomando el mayor valor absoluto
+        if (stockDedup[nom] === undefined || Math.abs(parseFloat(s.cantidad)) > Math.abs(stockDedup[nom])) {
+            stockDedup[nom] = parseFloat(s.cantidad)||0;
+        }
     });
+
+    const labels = [], data = [], colors = [];
+    Object.entries(stockDedup).forEach(([nom, cantidad]) => {
+        if (cantidad <= 0) return;
+        // Filtrar fórmulas no activas
+        if (FORMULAS.includes(nom) && !formulasActivas.has(nom)) return;
+        labels.push(nom.length > 22 ? nom.substring(0,22)+'…' : nom);
+        data.push(cantidad);
+        const esFormula = FORMULAS.includes(nom);
+        if (esFormula) {
+            colors.push(cantidad < 20 ? '#e74c3c' : cantidad < 50 ? '#e67e22' : '#27ae60');
+        } else {
+            colors.push(cantidad < 5 ? '#e74c3c' : cantidad < 20 ? '#e67e22' : '#3498db');
+        }
+    });
+
     if (labels.length) {
         new Chart(ctx, {
             type: 'bar',
@@ -1278,33 +1310,6 @@ function initDashboard() {
             }
         });
     }
-}
-
-// ============ FINANZAS ============
-function vFinanzas() {
-    const hoyStr = hoy();
-    const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
-    const hace30Str = hace30.toISOString().split('T')[0];
-    return `${topbarHTML('📈 Finanzas')}
-    <div class="tab-bar">
-        <div class="tab active" onclick="tabFinanzas('resumen',this)">📊 Resumen</div>
-        <div class="tab" onclick="tabFinanzas('gastosvsingresos',this)">📉 Gastos vs Ingresos</div>
-        <div class="tab" onclick="tabFinanzas('detalle',this)">📋 Detalle gastos</div>
-    </div>
-    <div class="card" style="margin-bottom:16px;">
-        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
-            <div><label>Desde</label><input type="date" id="finDesde" value="${hace30Str}" onchange="initFinanzas()" style="width:160px;margin:0"></div>
-            <div><label>Hasta</label><input type="date" id="finHasta" value="${hoyStr}" onchange="initFinanzas()" style="width:160px;margin:0"></div>
-        </div>
-    </div>
-    <div id="finanzasContent"></div>`;
-}
-
-function tabFinanzas(tab, el) {
-    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
-    el.classList.add('active');
-    window._finTab = tab;
-    initFinanzas();
 }
 
 function initFinanzas() {
