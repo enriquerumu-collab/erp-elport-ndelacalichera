@@ -1265,6 +1265,33 @@ function initDashboard() {
     }
 }
 
+// ============ FINANZAS ============
+function vFinanzas() {
+    const hoyStr = hoy();
+    const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
+    const hace30Str = hace30.toISOString().split('T')[0];
+    return `${topbarHTML('📈 Finanzas')}
+    <div class="tab-bar">
+        <div class="tab active" onclick="tabFinanzas('resumen',this)">📊 Resumen</div>
+        <div class="tab" onclick="tabFinanzas('gastosvsingresos',this)">📉 Gastos vs Ingresos</div>
+        <div class="tab" onclick="tabFinanzas('detalle',this)">📋 Detalle gastos</div>
+    </div>
+    <div class="card" style="margin-bottom:16px;">
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+            <div><label>Desde</label><input type="date" id="finDesde" value="${hace30Str}" onchange="initFinanzas()" style="width:160px;margin:0"></div>
+            <div><label>Hasta</label><input type="date" id="finHasta" value="${hoyStr}" onchange="initFinanzas()" style="width:160px;margin:0"></div>
+        </div>
+    </div>
+    <div id="finanzasContent"></div>`;
+}
+
+function tabFinanzas(tab, el) {
+    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    window._finTab = tab;
+    initFinanzas();
+}
+
 function initFinanzas() {
     const desde = document.getElementById('finDesde')?.value || hoy().substring(0,7)+'-01';
     const hasta = document.getElementById('finHasta')?.value || hoy();
