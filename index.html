@@ -347,7 +347,18 @@ async function sincronizar() {
             if (d.abonos) DB.abonos = d.abonos.map(a => ({ ...a, fecha: normalizarFecha(a.fecha) }));
             if (d.mortalidad) DB.mortalidad = d.mortalidad.map(m => ({ ...m, fecha: normalizarFecha(m.fecha) }));
             if (d.carneStock) DB.carneStock = d.carneStock.map(c => ({ ...c, fecha: normalizarFecha(c.fecha) }));
-            if (d.recetas && Object.keys(d.recetas).length) DB.recetas = d.recetas;
+            if (d.recetas && Object.keys(d.recetas).length) {
+                // Normalizar claves de recetas (Maíz → Maiz, Núcleo → Nucleo)
+                const recetasNorm = {};
+                Object.keys(d.recetas).forEach(formula => {
+                    recetasNorm[formula] = {};
+                    Object.keys(d.recetas[formula]).forEach(ing => {
+                        const ingNorm = ing.replace('Maíz','Maiz').replace('Núcleo ','Nucleo ');
+                        recetasNorm[formula][ingNorm] = d.recetas[formula][ing];
+                    });
+                });
+                DB.recetas = recetasNorm;
+            }
 
             guardarLocal();
             renderizar(vistaActual);
