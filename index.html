@@ -1499,8 +1499,10 @@ function renderProyeccion() {
             } else {
                 const receta = getRecetas()[formula] || {};
                 for (const ing in receta) {
-                    if (!NUCLEOS.includes(ing)) {
-                        necesidadBase[ing] = (necesidadBase[ing]||0) + (receta[ing]/500)*consumoDia;
+                    if (!NUCLEOS.includes(ing) && !NUCLEOS.some(n => n.replace('Nucleo ','Núcleo ') === ing)) {
+                        // Normalizar nombre para que coincida con INSUMOS_MOLINO (sin tilde)
+                        const ingNorm = ing.replace('Maíz','Maiz').replace('Núcleo ','Nucleo ');
+                        necesidadBase[ingNorm] = (necesidadBase[ingNorm]||0) + (receta[ing]/500)*consumoDia;
                     }
                 }
             }
@@ -2491,7 +2493,7 @@ function vStock(){
     const FORMULAS_ALIMENTO = ['Pato Inicio','Pato Crecimiento','Pato Acabado','Cerdo Inicio','Cerdo Crecimiento','Cerdo Desarrollo','Cerdo Acabado','Corimicyn'];
     const insumosBase = DB.stock.filter(s => !FORMULAS_ALIMENTO.includes((s.nombre||'').replace('🥣 ','')));
     const alimentoPrep = DB.stock.filter(s => FORMULAS_ALIMENTO.includes((s.nombre||'').replace('🥣 ','')));
-    return`${topbarHTML('📦 Stock')}<div class="grid-2"><div class="card"><div class="card-header">🌽 Insumos Base</div>${insumosBase.map(s=>{const c=parseFloat(s.cantidad)||0;return`<div class="stock-item"><div><b>${s.nombre}</b></div><div style="color:${c<=0?'#e74c3c':c<10?'#e67e22':'#27ae60'};font-weight:700">${c.toFixed(2)} kg</div></div>`;}).join('')||'<p style="color:#718096">Sin datos. Sincroniza.</p>'}</div><div class="card"><div class="card-header">🥣 Alimento Preparado</div>${alimentoPrep.map(s=>{const c=parseFloat(s.cantidad)||0;return`<div class="stock-item"><div><b>${s.nombre.replace('🥣 ','')}</b></div><div style="color:${c<=0?'#e74c3c':c>0?'#27ae60':'#718096'};font-weight:700">${c.toFixed(2)} kg</div></div>`;}).join('')||'<p style="color:#718096">Sin alimento preparado</p>'}</div></div>`;
+    return`${topbarHTML('📦 Stock')}<div class="grid-2"><div class="card"><div class="card-header">🌽 Insumos Base</div>${insumosBase.map(s=>{const c=parseFloat(s.cantidad)||0;return`<div class="stock-item"><div><b>${s.nombre}</b></div><div style="color:${c<=0?'#e74c3c':c<10?'#e67e22':'#27ae60'};font-weight:700">${c.toFixed(2)} kg</div></div>`;}).join('')||'<p style="color:#718096">Sin datos. Sincroniza.</p>'}</div><div class="card"><div class="card-header">🥣 Alimento Preparado</div>${alimentoPrep.map(s=>{const c=Math.max(0,parseFloat(s.cantidad)||0);return`<div class="stock-item"><div><b>${s.nombre.replace('🥣 ','')}</b></div><div style="color:${c<=0?'#e74c3c':c>0?'#27ae60':'#718096'};font-weight:700">${c.toFixed(2)} kg</div></div>`;}).join('')||'<p style="color:#718096">Sin alimento preparado</p>'}</div></div>`;
 }
 
 // ============ TICKETS ============
