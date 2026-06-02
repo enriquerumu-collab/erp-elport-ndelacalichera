@@ -261,13 +261,14 @@ function cDiario(lote) {
 
 function cDiarioTotal(lote) { return lote.cantidad * cDiario(lote); }
 
+function normalizarNombreStock(n) {
+    return (n||'').replace('🥣 ','').trim()
+        .replace('Maiz','Maíz')
+        .replace('Nucleo ','Núcleo ');
+}
 function getStock(nombre) {
-    let s = DB.stock.find(x => x.nombre === nombre);
-    if (s) return Math.max(0, parseFloat(s.cantidad)||0);
-    s = DB.stock.find(x => x.nombre === ('🥣 ' + nombre));
-    if (s) return Math.max(0, parseFloat(s.cantidad)||0);
-    const sinEmoji = nombre.replace('🥣 ','');
-    s = DB.stock.find(x => x.nombre === sinEmoji);
+    const buscar = normalizarNombreStock(nombre);
+    const s = DB.stock.find(x => normalizarNombreStock(x.nombre) === buscar);
     if (s) return Math.max(0, parseFloat(s.cantidad)||0);
     return 0;
 }
