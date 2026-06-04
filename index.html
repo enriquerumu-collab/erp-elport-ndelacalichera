@@ -1709,21 +1709,23 @@ function renderProyeccion() {
         necesario: necesidadBase[ing]||0
     }));
 
-    html += `<div style="background:#fffbea;border:1px solid #f6e05e;border-radius:10px;padding:14px;margin-bottom:12px">
-        <div style="font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px">
-            <span>🏭 Molino</span><span style="font-size:12px;font-weight:400;color:#718096">(cualquier día excepto domingo)</span>
-        </div>`;
+    html += `<div style="border:2px solid #f6e05e;border-radius:10px;margin-bottom:12px;overflow:hidden">
+        <div style="background:#fffbea;padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #f6e05e">
+            <span style="font-weight:700">🏭 Molino</span>
+            <span style="font-size:12px;color:#718096">(cualquier día excepto domingo)</span>
+        </div>
+        <div style="padding:10px 14px">`;
     if (!faltaMolino.length) {
         html += `<div style="color:#27ae60;font-size:13px">✅ Stock suficiente para las próximas 2 semanas</div>`;
     } else {
         faltaMolino.forEach(x => {
-            html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #fef3c7;font-size:13px">
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #fef3c7;font-size:13px">
                 <span>🔴 <b>${x.ing === 'Maiz' ? 'Maíz' : x.ing}</b></span>
                 <span>faltan <b>${x.faltante.toFixed(1)} kg</b> <span style="color:#718096">(stock: ${x.stock.toFixed(1)})</span></span>
             </div>`;
         });
     }
-    html += `</div>`;
+    html += `</div></div>`;
 
     // MONTANA NÚCLEOS
     const NUCLEOS_MONTANA = ['Nucleo Pato Inicio','Nucleo Pato Crecimiento','Nucleo Pato Acabado',
@@ -1806,14 +1808,282 @@ function renderHistorialCompras(pagina) {
     div.innerHTML = html;
 }
 
+function renderProyeccionNucleos() {
+    const div = document.getElementById('proyeccionNucleos');
+    if (!div) return;
+    const todosLotes = [...lotesActivos(), ...lotesFuturos()];
+    if (!todosLotes.length) { div.innerHTML = '<p style="color:#718096">Sin lotes activos</p>'; return; }
+
+    const ETAPAS_PATO = [
+        { nombre:'Inicio', semIni:2, semFin:3, nucleo:'Nucleo Pato Inicio', formula:'Pato Inicio' },
+        { nombre:'Crecimiento', semIni:4, semFin:7, nucleo:'Nucleo Pato Crecimiento', formula:'Pato Crecimiento' },
+        { nombre:'Acabado', semIni:8, semFin:12, nucleo:'Nucleo Pato Acabado', formula:'Pato Acabado' }
+    ];
+    const ETAPAS_CERDO = [
+        { nombre:'Inicio', semIni:1, semFin:4, nucleo:'Nucleo Cerdo Inicio', formula:'Cerdo Inicio' },
+        { nombre:'Crecimiento', semIni:5, semFin:7, nucleo:'Nucleo Cerdo Crecimiento', formula:'Cerdo Crecimiento' },
+        { nombre:'Desarrollo', semIni:8, semFin:10, nucleo:'Nucleo Cerdo Desarrollo', formula:'Cerdo Desarrollo' },
+        { nombre:'Acabado', semIni:11, semFin:14, nucleo:'Nucleo Cerdo Acabado', formula:'Cerdo Acabado' }
+    ];
+
+    const stockNucleos = {};
+    [...ETAPAS_PATO, ...ETAPAS_CERDO].forEach(e => {
+        stockNucleos[e.nucleo] = Math.max(0, getStock(e.nucleo) || getStock(e.nucleo.replace('Nucleo ','Núcleo ')) || 0);
+    });
+
+    const necesidadTotal = {};
+    [...ETAPAS_PATO, ...ETAPAS_CERDO].forEach(e => necesidadTotal[e.nucleo] = 0);
+
+    const hoyDate = new Date(hoy() + 'T00:00:00');
+    const recetas = getRecetas();
+
+    const datosLotes = todosLotes.map(l => {
+        const esCerdo = (l.especie||'').toLowerCase().includes('cerdo');
+        const ETAPAS = esCerdo ? ETAPAS_CERDO : ETAPAS_PATO;
+        const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
+        const esFuturo = fechaLlegada > hoyDate;
+
+        const etapasLote = ETAPAS.map(etapa => {
+            const diaIniEtapa = (etapa.semIni - 1) * 7;
+            const diaFinEtapa = etapa.semFin * 7 - 1;
+            const fechaIni = new Date(fechaLlegada.getTime() + diaIniEtapa * 86400000);
+            const fechaFin = new Date(fechaLlegada.getTime() + diaFinEtapa * 86400000);
+            if (fechaFin < hoyDate) return null;
+
+            const diaIniEfectivo = hoyDate > fechaIni ? hoyDate : fechaIni;
+            const diasRestantes = Math.floor((fechaFin - diaIniEfectivo) / 86400000) + 1;
+            if (diasRestantes <= 0) return null;
+
+            let consumoDiaProm = 0;
+            for (let s = etapa.semIni; s <= etapa.semFin; s++) {
+                const curvaS = DB.curva.find(c => c.semana == s) || DB.curva[DB.curva.length-1];
+                if (curvaS) consumoDiaProm += esCerdo ? (curvaS.cerdo||0)/7 : (curvaS.patoMacho+curvaS.patoHembra)/2/7;
+            }
+            consumoDiaProm /= (etapa.semFin - etapa.semIni + 1);
+            if (isNaN(consumoDiaProm) || consumoDiaProm <= 0) return null;
+
+            const kgAlimento = l.cantidad * consumoDiaProm * diasRestantes;
+            const receta = recetas[etapa.formula] || {};
+            const kgNucleoReceta = parseFloat(receta[etapa.nucleo] || receta[etapa.nucleo.replace('Nucleo ','Núcleo ')] || 0);
+            if (kgNucleoReceta <= 0) return null;
+            const kgNucleo = (kgNucleoReceta / 500) * kgAlimento;
+            if (isNaN(kgNucleo)) return null;
+
+            necesidadTotal[etapa.nucleo] = (necesidadTotal[etapa.nucleo]||0) + kgNucleo;
+            return { etapa: etapa.nombre, fechaIni: diaIniEfectivo.toISOString().split('T')[0], fechaFin: fechaFin.toISOString().split('T')[0], kgNucleo, diasRestantes };
+        }).filter(Boolean);
+
+        return { lote: l, etapasLote, esFuturo, esCerdo };
+    });
+
+    let html = '';
+    datosLotes.forEach(({ lote, etapasLote, esFuturo, esCerdo }) => {
+        if (!etapasLote.length) return;
+        const borderColor = esFuturo ? '#9b59b6' : esCerdo ? '#e67e22' : '#3498db';
+        html += `<div style="border-left:3px solid ${borderColor};padding:10px 14px;background:#f7fafc;border-radius:8px;margin-bottom:12px">
+            <div style="font-weight:700;margin-bottom:8px">${esCerdo?'🐷':'🦆'} ${lote.id} <span style="font-size:11px;background:${borderColor};color:white;padding:2px 6px;border-radius:4px">${esFuturo?'FUTURO':'ACTIVO'}</span></div>`;
+        etapasLote.forEach(e => {
+            html += `<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #e2e8f0">
+                <span>${e.etapa}: ${e.fechaIni} → ${e.fechaFin} (${e.diasRestantes}d)</span>
+                <span style="font-weight:700">${e.kgNucleo.toFixed(1)} kg</span>
+            </div>`;
+        });
+        html += `</div>`;
+    });
+
+    // Resumen consolidado
+    html += `<div style="background:#1a202c;border-radius:10px;padding:14px;margin-top:8px">
+        <div style="font-weight:700;color:white;margin-bottom:10px">📊 Resumen consolidado</div>`;
+    [...ETAPAS_PATO, ...ETAPAS_CERDO].forEach(e => {
+        const stock = stockNucleos[e.nucleo] || 0;
+        const necesario = necesidadTotal[e.nucleo] || 0;
+        if (necesario <= 0 && stock <= 0) return;
+        const falta = Math.max(0, necesario - stock);
+        const sacos = Math.ceil(necesario / 10);
+        const color = falta > 0 ? '#e74c3c' : '#27ae60';
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #2d3748;font-size:12px">
+            <span style="color:#e2e8f0">${e.nucleo.replace('Nucleo ','')}</span>
+            <div style="text-align:right">
+                <span style="color:${color};font-weight:700">${falta>0?'⚠️ faltan '+falta.toFixed(1)+' kg':'✅ OK'}</span>
+                <span style="color:#718096;margin-left:8px">stock: ${stock.toFixed(1)} kg · necesario: ${necesario.toFixed(1)} kg (~${sacos} sacos)</span>
+            </div>
+        </div>`;
+    });
+    html += `</div>`;
+    div.innerHTML = html || '<p style="color:#718096">Sin necesidades de núcleos pendientes</p>';
+}
+
+function renderCalendarioPedidos() {
+    const div = document.getElementById('calendarioPedidos');
+    if (!div) return;
+
+    const todosLotesCal = [...lotesActivos(), ...lotesFuturos()];
+    if (!todosLotesCal.length || !DB.curva.length) {
+        div.innerHTML = '<p style="color:#718096">Sin lotes. Sincroniza.</p>';
+        return;
+    }
+
+    const NUCLEOS_INFO = [
+        { nucleo:'Nucleo Pato Inicio',      formula:'Pato Inicio',      semIni:2, semFin:3,  kgPorSaco:10, especie:'pato' },
+        { nucleo:'Nucleo Pato Crecimiento', formula:'Pato Crecimiento', semIni:4, semFin:7,  kgPorSaco:10, especie:'pato' },
+        { nucleo:'Nucleo Pato Acabado',     formula:'Pato Acabado',     semIni:8, semFin:12, kgPorSaco:10, especie:'pato' },
+        { nucleo:'Nucleo Cerdo Inicio',      formula:'Cerdo Inicio',      semIni:1, semFin:4,  kgPorSaco:8.5, especie:'cerdo' },
+        { nucleo:'Nucleo Cerdo Crecimiento', formula:'Cerdo Crecimiento', semIni:5, semFin:7,  kgPorSaco:9,   especie:'cerdo' },
+        { nucleo:'Nucleo Cerdo Desarrollo',  formula:'Cerdo Desarrollo',  semIni:8, semFin:10, kgPorSaco:6,   especie:'cerdo' },
+        { nucleo:'Nucleo Cerdo Acabado',     formula:'Cerdo Acabado',     semIni:11,semFin:14, kgPorSaco:8,   especie:'cerdo' }
+    ].filter(ni => {
+        if (ni.especie==='cerdo' && !todosLotesCal.some(l=>(l.especie||'').toLowerCase().includes('cerdo'))) return false;
+        if (ni.especie==='pato' && !todosLotesCal.some(l=>(l.especie||'').toLowerCase().includes('pato'))) return false;
+        return true;
+    });
+
+    const hoyDate = new Date(hoy() + 'T00:00:00');
+    const recetas = getRecetas();
+    const stockActual = {};
+    NUCLEOS_INFO.forEach(n => {
+        stockActual[n.nucleo] = Math.max(0, getStock(n.nucleo) || getStock(n.nucleo.replace('Nucleo ','Núcleo ')) || 0);
+    });
+
+    const timeline = [];
+    todosLotesCal.forEach(l => {
+        const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
+        NUCLEOS_INFO.forEach(ni => {
+            const diaIni = (ni.semIni-1)*7;
+            const diaFin = ni.semFin*7-1;
+            const fechaIni = new Date(fechaLlegada.getTime()+diaIni*86400000);
+            const fechaFin = new Date(fechaLlegada.getTime()+diaFin*86400000);
+            if (fechaFin < hoyDate) return;
+            const diaIniEfectivo = hoyDate > fechaIni ? hoyDate : fechaIni;
+            const diasRestantes = Math.floor((fechaFin-diaIniEfectivo)/86400000)+1;
+            if (diasRestantes <= 0) return;
+            let consumoDiaProm = 0;
+            for (let s = ni.semIni; s <= ni.semFin; s++) {
+                const curvaS = DB.curva.find(c=>c.semana==s)||DB.curva[0];
+                if (curvaS) consumoDiaProm += (curvaS.patoMacho+curvaS.patoHembra)/2/7;
+            }
+            consumoDiaProm /= (ni.semFin-ni.semIni+1);
+            if (isNaN(consumoDiaProm)||consumoDiaProm<=0) return;
+            const kgAlimento = l.cantidad*consumoDiaProm*diasRestantes;
+            const receta = recetas[ni.formula]||{};
+            const kgNucleoReceta = parseFloat(receta[ni.nucleo]||receta[ni.nucleo.replace('Nucleo ','Núcleo ')]||0);
+            if (kgNucleoReceta<=0) return;
+            const kgNucleo = (kgNucleoReceta/500)*kgAlimento;
+            if (kgNucleo<=0||isNaN(kgNucleo)) return;
+            timeline.push({ fechaInicio:diaIniEfectivo, fechaFin, nucleo:ni.nucleo, kg:kgNucleo, kgPorSaco:ni.kgPorSaco });
+        });
+    });
+
+    if (!timeline.length) { div.innerHTML = '<div style="color:#27ae60;padding:12px">✅ Sin necesidades próximas</div>'; return; }
+
+    const diasHastaLunes = ((8-hoyDate.getDay())%7)||7;
+    const primerLunes = new Date(hoyDate.getTime()+diasHastaLunes*86400000);
+    const pedidos = [];
+    const stockSim = {...stockActual};
+    const yaAdelantado = {};
+    NUCLEOS_INFO.forEach(n => yaAdelantado[n.nucleo]=0);
+
+    for (let p = 0; p < 4; p++) {
+        const fechaPedido = new Date(primerLunes.getTime()+p*21*86400000);
+        const fechaLlegadaPedido = new Date(fechaPedido.getTime()+86400000);
+        const ventanaFin = new Date(fechaPedido.getTime()+21*86400000);
+        const necesidadVentana = {};
+        NUCLEOS_INFO.forEach(n => necesidadVentana[n.nucleo]=0);
+        timeline.forEach(t => {
+            const inicioSolap = t.fechaInicio>fechaLlegadaPedido?t.fechaInicio:fechaLlegadaPedido;
+            const finSolap = t.fechaFin<ventanaFin?t.fechaFin:ventanaFin;
+            if (inicioSolap>finSolap) return;
+            const diasTotales = Math.floor((t.fechaFin-t.fechaInicio)/86400000)+1;
+            const diasSolap = Math.floor((finSolap-inicioSolap)/86400000)+1;
+            const kgProp = t.kg*(diasSolap/diasTotales);
+            if (!isNaN(kgProp)) necesidadVentana[t.nucleo]+=kgProp;
+        });
+
+        const items = [];
+        let totalSacos = 0;
+        NUCLEOS_INFO.forEach(ni => {
+            const necesario = necesidadVentana[ni.nucleo]||0;
+            const stockDisp = Math.max(0,(stockSim[ni.nucleo]||0)-(yaAdelantado[ni.nucleo]||0));
+            const faltante = Math.max(0,necesario-stockDisp);
+            if (faltante<=0) return;
+            const sacos = Math.ceil(faltante/ni.kgPorSaco);
+            items.push({nucleo:ni.nucleo,sacos,kg:sacos*ni.kgPorSaco,kgPorSaco:ni.kgPorSaco});
+            totalSacos+=sacos;
+        });
+        if (!items.length) continue;
+
+        const adelantos = [];
+        if (totalSacos<6) {
+            const faltanParaGratis = 6-totalSacos;
+            const candidatos = NUCLEOS_INFO.map(ni => {
+                if (items.find(i=>i.nucleo===ni.nucleo)) return null;
+                let kgFuturo = 0;
+                timeline.forEach(t => { if (t.nucleo!==ni.nucleo||t.fechaFin<=ventanaFin) return; kgFuturo+=t.kg; });
+                if (kgFuturo<=0) return null;
+                return {nucleo:ni.nucleo,sacosFuturos:Math.ceil(kgFuturo/ni.kgPorSaco),kgFuturo,kgPorSaco:ni.kgPorSaco};
+            }).filter(Boolean).sort((a,b)=>b.kgFuturo-a.kgFuturo);
+            if (candidatos.length>0) {
+                const mejor = candidatos[0];
+                const sacosAdelantar = Math.min(faltanParaGratis,mejor.sacosFuturos);
+                if (sacosAdelantar>0) {
+                    adelantos.push({nucleo:mejor.nucleo,sacos:sacosAdelantar,kgPorSaco:mejor.kgPorSaco});
+                    yaAdelantado[mejor.nucleo]=(yaAdelantado[mejor.nucleo]||0)+sacosAdelantar*mejor.kgPorSaco;
+                    totalSacos+=sacosAdelantar;
+                }
+            }
+        }
+        items.forEach(item=>{stockSim[item.nucleo]=(stockSim[item.nucleo]||0)+item.kg;});
+        adelantos.forEach(adel=>{stockSim[adel.nucleo]=(stockSim[adel.nucleo]||0)+adel.sacos*adel.kgPorSaco;});
+        pedidos.push({fechaPedido,fechaLlegadaPedido,items,adelantos,totalSacos});
+    }
+
+    if (!pedidos.length) { div.innerHTML = '<div style="color:#27ae60;padding:12px">✅ Stock suficiente, sin pedidos necesarios próximamente</div>'; return; }
+
+    const fmtF = d=>d.toISOString().split('T')[0];
+    const diasHasta = d=>Math.floor((d-hoyDate)/86400000);
+    let html = '';
+    pedidos.forEach((ped,idx) => {
+        const dias = diasHasta(ped.fechaPedido);
+        const urgente = dias<=3;
+        const color = urgente?'#e74c3c':idx===1?'#e67e22':'#3498db';
+        const bg = urgente?'#fff5f5':idx===1?'#fffaf0':'#ebf8ff';
+        const icono = urgente?'🔴':idx===1?'🟡':'🔵';
+        const label = urgente?'URGENTE':dias<=14?'PRÓXIMO':'PLANIFICADO';
+        const envioGratis = ped.totalSacos>=6;
+        html += `<div style="border:2px solid ${color};border-radius:10px;margin-bottom:14px;overflow:hidden">
+            <div style="background:${bg};padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                <div>
+                    <span style="font-weight:700;font-size:14px">${icono} Pedido ${idx+1} — ${label}</span>
+                    <span style="color:#718096;font-size:12px;margin-left:10px">Pedir: <b>${fmtF(ped.fechaPedido)}</b> | Llega: <b>${fmtF(ped.fechaLlegadaPedido)}</b></span>
+                </div>
+                <span style="background:${color};color:white;padding:4px 12px;border-radius:6px;font-weight:700;font-size:12px">${ped.totalSacos} sacos ${envioGratis?'✅ envío gratis':'⚠️ sin envío gratis'}</span>
+            </div>
+            <div style="padding:10px 16px">`;
+        ped.items.forEach(item => {
+            html += `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e2e8f0;font-size:13px">
+                <span>📦 <b>${item.nucleo.replace('Nucleo ','')}</b></span>
+                <span style="font-weight:700">${item.sacos} saco(s) — ${item.kg.toFixed(0)} kg</span></div>`;
+        });
+        ped.adelantos.forEach(adel => {
+            html += `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e2e8f0;font-size:13px;background:#fffbea">
+                <span>⏩ <b>${adel.nucleo.replace('Nucleo ','')}</b> <span style="color:#e67e22;font-size:11px">(adelantado para envío gratis)</span></span>
+                <span style="font-weight:700;color:#e67e22">${adel.sacos} saco(s) — ${(adel.sacos*adel.kgPorSaco).toFixed(0)} kg</span></div>`;
+        });
+        if (!envioGratis) html += `<div style="background:#fff3cd;padding:7px 10px;border-radius:6px;margin-top:8px;font-size:12px">⚠️ Solo ${ped.totalSacos} sacos — considera si vale la pena pagar envío</div>`;
+        html += `</div></div>`;
+    });
+    div.innerHTML = html;
+}
+
 function initCompras() {
     const fd = document.getElementById('compFecha');
     if (fd) fd.valueAsDate = new Date();
     renderCarrito();
     renderProyeccion();
     renderHistorialCompras();
-    renderProyeccionNucleos();
-    renderCalendarioPedidos();
+    setTimeout(() => {
+        renderProyeccionNucleos();
+        renderCalendarioPedidos();
+    }, 100);
 }
 
 function agregarAlCarrito() {
