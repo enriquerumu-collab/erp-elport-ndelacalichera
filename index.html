@@ -1696,7 +1696,9 @@ function renderProyeccion() {
     });
 
     const lotesFutCount = lotesFut.length;
-    let html = `<p style="font-size:12px;color:#718096;margin-bottom:12px">Proyección ${DIAS} días — incluye ${lotesFutCount} lote(s) futuro(s) en núcleos</p>`;
+    let html = `<div style="font-size:12px;color:#718096;margin-bottom:14px;display:flex;align-items:center;gap:6px">
+        📅 Proyección <b>${DIAS} días</b> — incluye <b>${lotesFutCount}</b> lote(s) futuro(s)
+    </div>`;
 
     // MOLINO
     const faltaMolino = INSUMOS_MOLINO.filter(ing => {
@@ -1709,19 +1711,30 @@ function renderProyeccion() {
         necesario: necesidadBase[ing]||0
     }));
 
-    html += `<div style="border:2px solid #f6e05e;border-radius:10px;margin-bottom:12px;overflow:hidden">
-        <div style="background:#fffbea;padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #f6e05e">
-            <span style="font-weight:700">🏭 Molino</span>
-            <span style="font-size:12px;color:#718096">(cualquier día excepto domingo)</span>
+    const molinoOK = faltaMolino.length === 0;
+    html += `<div style="border:2px solid ${molinoOK?'#c6f6d5':'#f6e05e'};border-radius:12px;margin-bottom:12px;overflow:hidden">
+        <div style="background:${molinoOK?'#f0fff4':'#fffbea'};padding:10px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid ${molinoOK?'#c6f6d5':'#f6e05e'}">
+            <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:16px">🏭</span>
+                <span style="font-weight:700;font-size:14px">Molino</span>
+                <span style="font-size:11px;color:#718096">cualquier día excepto domingo</span>
+            </div>
+            <span style="font-size:12px;font-weight:600;color:${molinoOK?'#27ae60':'#d69e2e'}">${molinoOK?'✅ OK':'⚠️ Faltan insumos'}</span>
         </div>
-        <div style="padding:10px 14px">`;
-    if (!faltaMolino.length) {
-        html += `<div style="color:#27ae60;font-size:13px">✅ Stock suficiente para las próximas 2 semanas</div>`;
+        <div style="padding:10px 16px">`;
+    if (molinoOK) {
+        html += `<div style="color:#27ae60;font-size:13px;padding:4px 0">Stock suficiente para las próximas 2 semanas</div>`;
     } else {
         faltaMolino.forEach(x => {
-            html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #fef3c7;font-size:13px">
-                <span>🔴 <b>${x.ing === 'Maiz' ? 'Maíz' : x.ing}</b></span>
-                <span>faltan <b>${x.faltante.toFixed(1)} kg</b> <span style="color:#718096">(stock: ${x.stock.toFixed(1)})</span></span>
+            const pct = Math.min(100, Math.round((x.stock/x.necesario)*100));
+            html += `<div style="padding:8px 0;border-bottom:1px solid #fef3c7">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                    <span style="font-weight:600;font-size:13px">${x.ing==='Maiz'?'Maíz':x.ing}</span>
+                    <span style="font-size:12px">faltan <b style="color:#e74c3c">${x.faltante.toFixed(1)} kg</b> <span style="color:#718096">· stock: ${x.stock.toFixed(1)} kg</span></span>
+                </div>
+                <div style="background:#e2e8f0;border-radius:4px;height:6px;overflow:hidden">
+                    <div style="background:#e74c3c;height:100%;width:${pct}%;border-radius:4px"></div>
+                </div>
             </div>`;
         });
     }
@@ -1737,41 +1750,72 @@ function renderProyeccion() {
     let totalSacosPedir = 0;
     let hayProblema = false;
 
-    html += `<div style="background:#ebf8ff;border:1px solid #90cdf4;border-radius:10px;padding:14px;margin-bottom:12px">
-        <div style="font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px">
-            <span>🏔️ Montana — Núcleos</span><span style="font-size:12px;font-weight:400;color:#718096">(pedir lunes, llega martes)</span>
-        </div>`;
-
     let todasOK = true;
+    const nucleosItems = [];
     nucleosFaltan.forEach(n => {
         const stock = getStock(n);
         const necesario = necesidadNucleos[n]||0;
         const falta = Math.max(0, necesario - stock);
-        const sacos = Math.ceil(necesario / 10);
         const nombre = n.replace('Nucleo ','');
         const ok = falta <= 0;
         if (!ok) { todasOK = false; totalSacosPedir += Math.ceil(falta/10); hayProblema = true; }
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #bee3f8;font-size:13px">
-            <div>${ok?'✅':'🔴'} <b>${nombre}</b><br><span style="color:#718096;font-size:11px">Stock: ${stock.toFixed(1)} kg (~${(stock/10).toFixed(1)} sacos) | ${DIAS} días: ${necesario.toFixed(1)} kg</span></div>
-            <div style="font-weight:700;color:${ok?'#27ae60':'#e74c3c'}">${ok?'OK':'Faltan '+falta.toFixed(1)+' kg'}</div>
-        </div>`;
+        nucleosItems.push({nombre, stock, necesario, falta, ok});
     });
 
-    if (todasOK && nucleosFaltan.length) {
-        html = html.replace('</div>', '') + `<div style="color:#27ae60;font-size:13px;margin-top:6px">✅ Stock suficiente para las próximas 2 semanas</div></div>`;
-    } else {
-        html += `<div style="margin-top:8px;font-size:13px">🎒 Total sacos a pedir: <b>${totalSacosPedir}</b></div></div>`;
+    html += `<div style="border:2px solid ${todasOK?'#bee3f8':'#90cdf4'};border-radius:12px;margin-bottom:12px;overflow:hidden">
+        <div style="background:#ebf8ff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #bee3f8">
+            <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:16px">🏔️</span>
+                <span style="font-weight:700;font-size:14px">Montana — Núcleos</span>
+                <span style="font-size:11px;color:#718096">pedir lunes, llega martes</span>
+            </div>
+            <span style="font-size:12px;font-weight:600;color:${todasOK?'#27ae60':'#3182ce'}">${todasOK?'✅ Stock OK':'📦 '+totalSacosPedir+' sacos a pedir'}</span>
+        </div>
+        <div style="padding:10px 16px">`;
+
+    if (todasOK && nucleosItems.length) {
+        html += `<div style="color:#27ae60;font-size:13px;padding:4px 0">✅ Stock suficiente para las próximas 2 semanas</div>`;
     }
+    nucleosItems.forEach(x => {
+        const pct = x.necesario > 0 ? Math.min(100, Math.round((x.stock/x.necesario)*100)) : 100;
+        html += `<div style="padding:8px 0;border-bottom:1px solid #ebf8ff">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span style="font-weight:600;font-size:13px">${x.ok?'✅':'⚠️'} ${x.nombre}</span>
+                <span style="font-size:12px">${x.ok?`<span style="color:#27ae60;font-weight:700">OK</span>`:
+                    `faltan <b style="color:#e74c3c">${x.falta.toFixed(1)} kg</b>`}
+                    <span style="color:#718096"> · stock: ${x.stock.toFixed(1)} kg · necesario: ${x.necesario.toFixed(1)} kg</span>
+                </span>
+            </div>
+            <div style="background:#e2e8f0;border-radius:4px;height:5px;overflow:hidden">
+                <div style="background:${x.ok?'#27ae60':'#3182ce'};height:100%;width:${pct}%;border-radius:4px"></div>
+            </div>
+        </div>`;
+    });
+    html += `</div></div>`;
 
     // CORIMICYN
     const stockCori = getStock('Corimicyn');
     const faltaCori = Math.max(0, necesidadCorimicyn.kg - stockCori);
     if (necesidadCorimicyn.kg > 0 || stockCori > 0) {
         const ok = faltaCori <= 0;
-        html += `<div style="background:${ok?'#f0fff4':'#fff5f5'};border:1px solid ${ok?'#9ae6b4':'#fc8181'};border-radius:10px;padding:14px;margin-bottom:12px;font-size:13px">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-                <span>${ok?'✅':'🔴'} <b>Corimicyn</b>${ok?' — stock suficiente':': faltan '+faltaCori.toFixed(2)+' kg'}</span>
-                <span style="color:#718096">Stock: ${stockCori.toFixed(2)} kg | Necesitas: ${necesidadCorimicyn.kg.toFixed(2)} kg en ${DIAS} días</span>
+        const pctCori = necesidadCorimicyn.kg > 0 ? Math.min(100, Math.round((stockCori/necesidadCorimicyn.kg)*100)) : 100;
+        html += `<div style="border:2px solid ${ok?'#c6f6d5':'#fc8181'};border-radius:12px;margin-bottom:12px;overflow:hidden">
+            <div style="background:${ok?'#f0fff4':'#fff5f5'};padding:10px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid ${ok?'#c6f6d5':'#fed7d7'}">
+                <div style="display:flex;align-items:center;gap:8px">
+                    <span style="font-size:16px">💊</span>
+                    <span style="font-weight:700;font-size:14px">Corimicyn</span>
+                    <span style="font-size:11px;color:#718096">vitamina primeras semanas</span>
+                </div>
+                <span style="font-size:12px;font-weight:600;color:${ok?'#27ae60':'#e74c3c'}">${ok?'✅ Stock OK':'⚠️ Faltan '+faltaCori.toFixed(1)+' kg'}</span>
+            </div>
+            <div style="padding:10px 16px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
+                    <span style="color:#718096">Stock actual: <b>${stockCori.toFixed(1)} kg</b></span>
+                    <span style="color:#718096">Necesitas: <b>${necesidadCorimicyn.kg.toFixed(1)} kg</b> en ${DIAS} días</span>
+                </div>
+                <div style="background:#e2e8f0;border-radius:4px;height:6px;overflow:hidden">
+                    <div style="background:${ok?'#27ae60':'#e74c3c'};height:100%;width:${pctCori}%;border-radius:4px"></div>
+                </div>
             </div>
         </div>`;
     }
@@ -1892,20 +1936,31 @@ function renderProyeccionNucleos() {
     });
 
     // Resumen consolidado
-    html += `<div style="background:#1a202c;border-radius:10px;padding:14px;margin-top:8px">
-        <div style="font-weight:700;color:white;margin-bottom:10px">📊 Resumen consolidado</div>`;
+    html += `<div style="background:#1a202c;border-radius:12px;padding:16px;margin-top:12px">
+        <div style="font-weight:700;color:white;margin-bottom:12px;font-size:15px">📊 Resumen consolidado — todos los lotes</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:4px;font-size:10px;color:#718096;padding:0 4px">
+            <span>NÚCLEO</span><span style="text-align:center">STOCK / NECESARIO</span><span style="text-align:right">ESTADO</span>
+        </div>`;
     [...ETAPAS_PATO, ...ETAPAS_CERDO].forEach(e => {
         const stock = stockNucleos[e.nucleo] || 0;
         const necesario = necesidadTotal[e.nucleo] || 0;
         if (necesario <= 0 && stock <= 0) return;
         const falta = Math.max(0, necesario - stock);
-        const sacos = Math.ceil(necesario / 10);
-        const color = falta > 0 ? '#e74c3c' : '#27ae60';
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #2d3748;font-size:12px">
-            <span style="color:#e2e8f0">${e.nucleo.replace('Nucleo ','')}</span>
-            <div style="text-align:right">
-                <span style="color:${color};font-weight:700">${falta>0?'⚠️ faltan '+falta.toFixed(1)+' kg':'✅ OK'}</span>
-                <span style="color:#718096;margin-left:8px">stock: ${stock.toFixed(1)} kg · necesario: ${necesario.toFixed(1)} kg (~${sacos} sacos)</span>
+        const sacos = Math.ceil(Math.max(0, necesario - stock) / 10);
+        const ok = falta <= 0;
+        const pct = necesario > 0 ? Math.min(100, Math.round((stock/necesario)*100)) : 100;
+        html += `<div style="padding:10px 4px;border-bottom:1px solid #2d3748">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span style="color:#e2e8f0;font-weight:600;font-size:13px">${e.nucleo.replace('Nucleo ','')}</span>
+                <span style="font-size:12px;font-weight:700;color:${ok?'#68d391':'#fc8181'}">${ok?'✅ OK':'⚠️ '+sacos+' sacos'}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#a0aec0;margin-bottom:5px">
+                <span>Stock: ${stock.toFixed(1)} kg</span>
+                <span>Necesario: ${necesario.toFixed(1)} kg</span>
+                ${!ok?`<span style="color:#fc8181">Faltan: ${falta.toFixed(1)} kg</span>`:''}
+            </div>
+            <div style="background:#2d3748;border-radius:4px;height:5px;overflow:hidden">
+                <div style="background:${ok?'#68d391':'#fc8181'};height:100%;width:${pct}%;border-radius:4px;transition:width 0.3s"></div>
             </div>
         </div>`;
     });
