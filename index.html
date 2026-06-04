@@ -2096,13 +2096,34 @@ function renderCalendarioPedidos() {
     div.innerHTML = html;
 }
 
-function renderHistorialCompras() {
+function renderHistorialCompras(pagina) {
     const div = document.getElementById('historialCompras');
     if (!div) return;
-    const compras = DB.gastos.filter(g => g.concepto && g.concepto.includes('Compra:')).slice(0,100);
-    div.innerHTML = compras.length ? `<table><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>
-        ${compras.map(g=>`<tr><td>${normalizarFecha(g.fecha)}</td><td>${g.concepto}</td><td>S/ ${(parseFloat(g.monto)||0).toFixed(2)}</td></tr>`).join('')}
-        </tbody></table>` : '<p style="color:#718096">Sin compras. Sincroniza.</p>';
+    window._comprasPag = pagina || 1;
+    const POR_PAG = 25;
+    // Ordenar más reciente primero
+    const compras = [...DB.gastos]
+        .filter(g => g.concepto && g.concepto.includes('Compra:'))
+        .sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
+    const total = compras.length;
+    const totalPags = Math.ceil(total / POR_PAG);
+    const pag = window._comprasPag;
+    const items = compras.slice((pag-1)*POR_PAG, pag*POR_PAG);
+
+    if (!items.length) { div.innerHTML = '<p style="color:#718096">Sin compras. Sincroniza.</p>'; return; }
+
+    let html = `<table><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>
+        ${items.map(g=>`<tr><td>${normalizarFecha(g.fecha)}</td><td>${g.concepto}</td><td>S/ ${(parseFloat(g.monto)||0).toFixed(2)}</td></tr>`).join('')}
+        </tbody></table>`;
+
+    if (totalPags > 1) {
+        html += `<div style="display:flex;justify-content:center;align-items:center;gap:6px;margin-top:12px;flex-wrap:wrap">`;
+        for (let i = 1; i <= totalPags; i++) {
+            html += `<button onclick="renderHistorialCompras(${i})" style="padding:4px 10px;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;font-size:12px;background:${i===pag?'#27ae60':'white'};color:${i===pag?'white':'#2d3748'}">${i}</button>`;
+        }
+        html += `<span style="font-size:12px;color:#718096;margin-left:8px">Página ${pag} de ${totalPags} (${total} compras)</span></div>`;
+    }
+    div.innerHTML = html;
 }
 
 async function nuevoProveedor() {
@@ -2485,7 +2506,32 @@ async function quitarNevera(i){const item=DB.carneStock[i];if(!item)return;mostr
 function vGastos(){return`${topbarHTML('💸 Gastos')}<div class="grid-2"><div class="card"><div class="card-header">➕ Nuevo Gasto</div><label>Categoría</label><select id="gastoConcepto"><option>Vacuna</option><option>Medicina</option><option>Jornal</option><option>Transporte</option><option>Servicios</option><option>Otros</option></select><label>Detalle</label><input type="text" id="gastoDetalle" placeholder="Descripción"><label>Monto S/</label><input type="number" id="gastoMonto"><label>Fecha</label><input type="date" id="gastoFecha"><button class="btn btn-primary" onclick="regGasto()" style="width:100%">✅ Registrar</button></div><div class="card"><div class="card-header">📋 Últimos Gastos</div><div id="listaGastos"></div></div></div>`;}
 function initGastos(){const gf=document.getElementById('gastoFecha');if(gf)gf.valueAsDate=new Date();renderGastos();}
 async function regGasto(){const c=document.getElementById('gastoConcepto')?.value,d=document.getElementById('gastoDetalle')?.value.trim(),m=parseFloat(document.getElementById('gastoMonto')?.value),f=document.getElementById('gastoFecha')?.value||hoy();if(!m)return mostrarMensaje('Ingresa monto','error');const g={fecha:f,concepto:d?c+' - '+d:c,monto:m};mostrarModal('Confirmar Gasto',`${g.concepto}<br>S/ ${m.toFixed(2)}`,async()=>{DB.gastos.unshift({id:'G_'+Date.now(),...g});guardarLocal();const res=await enviarAlSheet('guardarGasto',g);if(!res.success)PENDIENTES.push({accion:'guardarGasto',datos:g});mostrarMensaje('✅ Gasto registrado');renderizar(vistaActual);});}
-function renderGastos(){const div=document.getElementById('listaGastos');if(!div)return;div.innerHTML=DB.gastos.slice(0,20).map(g=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0;font-size:13px"><div><b>${g.concepto||''}</b><br><small>${g.fecha}</small></div><div style="color:#e74c3c;font-weight:700;white-space:nowrap">S/ ${(parseFloat(g.monto)||0).toFixed(2)}</div></div>`).join('')||'<p style="color:#718096">Sin gastos</p>';}
+function renderGastos(pagina) {
+    const div = document.getElementById('listaGastos');
+    if (!div) return;
+    window._gastosPag = pagina || 1;
+    const POR_PAG = 25;
+    // Ordenar más reciente primero
+    const gastos = [...DB.gastos].sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
+    const total = gastos.length;
+    const totalPags = Math.ceil(total / POR_PAG);
+    const pag = window._gastosPag;
+    const items = gastos.slice((pag-1)*POR_PAG, pag*POR_PAG);
+
+    let html = items.map(g => `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0;font-size:13px">
+        <div><b>${g.concepto||''}</b><br><small>${g.fecha}</small></div>
+        <div style="color:#e74c3c;font-weight:700;white-space:nowrap">S/ ${(parseFloat(g.monto)||0).toFixed(2)}</div>
+    </div>`).join('') || '<p style="color:#718096">Sin gastos</p>';
+
+    if (totalPags > 1) {
+        html += `<div style="display:flex;justify-content:center;align-items:center;gap:6px;margin-top:12px;flex-wrap:wrap">`;
+        for (let i = 1; i <= totalPags; i++) {
+            html += `<button onclick="renderGastos(${i})" style="padding:4px 10px;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;font-size:12px;background:${i===pag?'#27ae60':'white'};color:${i===pag?'white':'#2d3748'}">${i}</button>`;
+        }
+        html += `<span style="font-size:12px;color:#718096;margin-left:8px">Página ${pag} de ${totalPags} (${total} registros)</span></div>`;
+    }
+    div.innerHTML = html;
+}
 
 // ============ MORTALIDAD ============
 function vMortalidad(){return`${topbarHTML('💀 Mortalidad')}<div class="grid-2"><div class="card"><div class="card-header">➕ Registrar</div><label>Lote</label><select id="mortLote">${DB.lotes.map((l,i)=>`<option value="${i}">${l.id} (${l.cantidad})</option>`).join('')}</select><div class="form-row"><div><label>Cantidad</label><input type="number" id="mortCant"></div><div><label>Causa</label><select id="mortCausa"><option>Enfermedad</option><option>Accidente</option><option>Selección</option><option>Descarte</option><option>Desconocida</option></select></div></div><label>Detalle</label><input type="text" id="mortDetalle" placeholder="Observaciones"><label>Fecha</label><input type="date" id="mortFecha"><button class="btn btn-danger" onclick="regMortalidad()" style="width:100%">💀 Registrar</button></div><div class="card"><div class="card-header">📋 Historial</div><div id="listaMortalidad"></div></div></div>`;}
