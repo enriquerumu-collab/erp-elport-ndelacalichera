@@ -1622,6 +1622,161 @@ function vCompras() {
     <div class="card"><div class="card-header">🧮 Proyección de Núcleos por Lote</div><div id="proyeccionNucleos"></div></div>`;
 }
 
+function renderProyeccion() {
+    const div = document.getElementById('proyeccionCompras');
+    if (!div) return;
+
+    const lotes = [...lotesActivos(), ...lotesFuturos()];
+    if (!lotes.length || !DB.curva.length) {
+        div.innerHTML = '<p style="color:#718096">Sincroniza para ver proyección</p>';
+        return;
+    }
+
+    const DIAS = 14;
+    const hoyDate = new Date(hoy() + 'T00:00:00');
+    const necesidadBase = {};
+    const necesidadNucleos = {};
+    const necesidadCorimicyn = { kg: 0 };
+
+    lotes.forEach(l => {
+        const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
+        const esP = (l.especie||'').toLowerCase().includes('pato');
+        const diasVida = Math.floor((hoyDate - fechaLlegada) / 86400000);
+        const recetas = getRecetas();
+
+        for (let d = 0; d < DIAS; d++) {
+            const diaActual = diasVida + d;
+            if (diaActual < 0) continue;
+            const semFutura = Math.floor(diaActual / 7) + 1;
+            const formula = getFormula(l.especie, semFutura);
+            const curvaRef = DB.curva.find(c => c.semana == semFutura) || DB.curva[DB.curva.length-1];
+            if (!curvaRef) continue;
+            const consumoDia = l.cantidad * (esP ?
+                (l.sexo==='M' ? curvaRef.patoMacho/7 : l.sexo==='H' ? curvaRef.patoHembra/7 : (curvaRef.patoMacho+curvaRef.patoHembra)/2/7) :
+                (curvaRef.cerdo||0)/7);
+
+            if (formula === 'Corimicyn') {
+                necesidadCorimicyn.kg += consumoDia;
+            } else {
+                const receta = recetas[formula] || {};
+                for (const ing in receta) {
+                    const ingNorm = ing.replace('Maíz','Maiz').replace('Núcleo ','Nucleo ');
+                    if (NUCLEOS.includes(ingNorm) || NUCLEOS.includes(ing)) {
+                        necesidadNucleos[ingNorm] = (necesidadNucleos[ingNorm]||0) + (receta[ing]/500)*consumoDia;
+                    } else {
+                        necesidadBase[ingNorm] = (necesidadBase[ingNorm]||0) + (receta[ing]/500)*consumoDia;
+                    }
+                }
+            }
+        }
+    });
+
+    // Lotes futuros también para núcleos
+    const lotesFut = lotesFuturos();
+    const recetas = getRecetas();
+    lotesFut.forEach(l => {
+        const fechaLlegada = new Date(l.fechaLlegada + 'T00:00:00');
+        const esP = (l.especie||'').toLowerCase().includes('pato');
+        const diasHasta = Math.floor((fechaLlegada - hoyDate) / 86400000);
+        for (let d = 0; d < DIAS - diasHasta; d++) {
+            if (d < 0) continue;
+            const semFutura = Math.floor(d / 7) + 1;
+            const formula = getFormula(l.especie, semFutura);
+            const curvaRef = DB.curva.find(c => c.semana == semFutura) || DB.curva[0];
+            if (!curvaRef || formula === 'Corimicyn') continue;
+            const consumoDia = l.cantidad * (esP ? (curvaRef.patoMacho+curvaRef.patoHembra)/2/7 : (curvaRef.cerdo||0)/7);
+            const receta = recetas[formula] || {};
+            for (const ing in receta) {
+                const ingNorm = ing.replace('Maíz','Maiz').replace('Núcleo ','Nucleo ');
+                if (NUCLEOS.includes(ingNorm) || NUCLEOS.includes(ing)) {
+                    necesidadNucleos[ingNorm] = (necesidadNucleos[ingNorm]||0) + (receta[ing]/500)*consumoDia;
+                }
+            }
+        }
+    });
+
+    const lotesFutCount = lotesFut.length;
+    let html = `<p style="font-size:12px;color:#718096;margin-bottom:12px">Proyección ${DIAS} días — incluye ${lotesFutCount} lote(s) futuro(s) en núcleos</p>`;
+
+    // MOLINO
+    const faltaMolino = INSUMOS_MOLINO.filter(ing => {
+        const stock = getStock(ing);
+        return (necesidadBase[ing] || 0) > stock;
+    }).map(ing => ({
+        ing,
+        faltante: Math.max(0, (necesidadBase[ing]||0) - getStock(ing)),
+        stock: getStock(ing),
+        necesario: necesidadBase[ing]||0
+    }));
+
+    html += `<div style="background:#fffbea;border:1px solid #f6e05e;border-radius:10px;padding:14px;margin-bottom:12px">
+        <div style="font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+            <span>🏭 Molino</span><span style="font-size:12px;font-weight:400;color:#718096">(cualquier día excepto domingo)</span>
+        </div>`;
+    if (!faltaMolino.length) {
+        html += `<div style="color:#27ae60;font-size:13px">✅ Stock suficiente para las próximas 2 semanas</div>`;
+    } else {
+        faltaMolino.forEach(x => {
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #fef3c7;font-size:13px">
+                <span>🔴 <b>${x.ing === 'Maiz' ? 'Maíz' : x.ing}</b></span>
+                <span>faltan <b>${x.faltante.toFixed(1)} kg</b> <span style="color:#718096">(stock: ${x.stock.toFixed(1)})</span></span>
+            </div>`;
+        });
+    }
+    html += `</div>`;
+
+    // MONTANA NÚCLEOS
+    const NUCLEOS_MONTANA = ['Nucleo Pato Inicio','Nucleo Pato Crecimiento','Nucleo Pato Acabado',
+        'Nucleo Cerdo Inicio','Nucleo Cerdo Crecimiento','Nucleo Cerdo Desarrollo','Nucleo Cerdo Acabado'];
+    const nucleosFaltan = NUCLEOS_MONTANA.filter(n => {
+        const necesario = necesidadNucleos[n]||0;
+        return necesario > 0 || getStock(n) > 0;
+    });
+    let totalSacosPedir = 0;
+    let hayProblema = false;
+
+    html += `<div style="background:#ebf8ff;border:1px solid #90cdf4;border-radius:10px;padding:14px;margin-bottom:12px">
+        <div style="font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+            <span>🏔️ Montana — Núcleos</span><span style="font-size:12px;font-weight:400;color:#718096">(pedir lunes, llega martes)</span>
+        </div>`;
+
+    let todasOK = true;
+    nucleosFaltan.forEach(n => {
+        const stock = getStock(n);
+        const necesario = necesidadNucleos[n]||0;
+        const falta = Math.max(0, necesario - stock);
+        const sacos = Math.ceil(necesario / 10);
+        const nombre = n.replace('Nucleo ','');
+        const ok = falta <= 0;
+        if (!ok) { todasOK = false; totalSacosPedir += Math.ceil(falta/10); hayProblema = true; }
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #bee3f8;font-size:13px">
+            <div>${ok?'✅':'🔴'} <b>${nombre}</b><br><span style="color:#718096;font-size:11px">Stock: ${stock.toFixed(1)} kg (~${(stock/10).toFixed(1)} sacos) | ${DIAS} días: ${necesario.toFixed(1)} kg</span></div>
+            <div style="font-weight:700;color:${ok?'#27ae60':'#e74c3c'}">${ok?'OK':'Faltan '+falta.toFixed(1)+' kg'}</div>
+        </div>`;
+    });
+
+    if (todasOK && nucleosFaltan.length) {
+        html = html.replace('</div>', '') + `<div style="color:#27ae60;font-size:13px;margin-top:6px">✅ Stock suficiente para las próximas 2 semanas</div></div>`;
+    } else {
+        html += `<div style="margin-top:8px;font-size:13px">🎒 Total sacos a pedir: <b>${totalSacosPedir}</b></div></div>`;
+    }
+
+    // CORIMICYN
+    const stockCori = getStock('Corimicyn');
+    const faltaCori = Math.max(0, necesidadCorimicyn.kg - stockCori);
+    if (necesidadCorimicyn.kg > 0 || stockCori > 0) {
+        const ok = faltaCori <= 0;
+        html += `<div style="background:${ok?'#f0fff4':'#fff5f5'};border:1px solid ${ok?'#9ae6b4':'#fc8181'};border-radius:10px;padding:14px;margin-bottom:12px;font-size:13px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <span>${ok?'✅':'🔴'} <b>Corimicyn</b>${ok?' — stock suficiente':': faltan '+faltaCori.toFixed(2)+' kg'}</span>
+                <span style="color:#718096">Stock: ${stockCori.toFixed(2)} kg | Necesitas: ${necesidadCorimicyn.kg.toFixed(2)} kg en ${DIAS} días</span>
+            </div>
+        </div>`;
+    }
+
+    div.innerHTML = html;
+}
+
 function initCompras() {
     const fd = document.getElementById('compFecha');
     if (fd) fd.valueAsDate = new Date();
