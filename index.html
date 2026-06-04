@@ -1284,16 +1284,11 @@ async function confirmarEditarLote(id) {
     l.cantidad = nuevaCant;
     l.fechaLlegada = nuevaFecha;
 
-    if (nuevoCosto > 0) {
-        const g = { fecha: hoy(), concepto:`✏️ Ajuste: ${l.especie} (${id}) — ${nuevaCant} animales`, monto: nuevoCosto };
-        DB.gastos.unshift({id:'G_'+Date.now(), ...g});
-        await enviarAlSheet('guardarGasto', g);
-    }
-
     guardarLocal();
     cerrarModal();
 
-    const res = await enviarAlSheet('editarLote', { id, cantidad: nuevaCant, fechaLlegada: nuevaFecha });
+    // Actualizar cantidad, fecha y costo en el sheet
+    const res = await enviarAlSheet('editarLote', { id, cantidad: nuevaCant, fechaLlegada: nuevaFecha, costo: nuevoCosto });
 
     let msg = '✅ Lote actualizado';
     if (cantAnterior !== nuevaCant) msg += `: ${cantAnterior} → ${nuevaCant} animales`;
@@ -2104,7 +2099,7 @@ function renderCalendarioPedidos() {
 function renderHistorialCompras() {
     const div = document.getElementById('historialCompras');
     if (!div) return;
-    const compras = DB.gastos.filter(g => g.concepto && g.concepto.includes('Compra:')).slice(0,20);
+    const compras = DB.gastos.filter(g => g.concepto && g.concepto.includes('Compra:')).slice(0,100);
     div.innerHTML = compras.length ? `<table><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>
         ${compras.map(g=>`<tr><td>${normalizarFecha(g.fecha)}</td><td>${g.concepto}</td><td>S/ ${(parseFloat(g.monto)||0).toFixed(2)}</td></tr>`).join('')}
         </tbody></table>` : '<p style="color:#718096">Sin compras. Sincroniza.</p>';
