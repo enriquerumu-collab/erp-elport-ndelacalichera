@@ -1237,6 +1237,7 @@ function vFinanzas() {
         <div class="tab active" onclick="tabFinanzas('resumen',this)">📊 Resumen</div>
         <div class="tab" onclick="tabFinanzas('gastosvsingresos',this)">📉 Gastos vs Ingresos</div>
         <div class="tab" onclick="tabFinanzas('detalle',this)">📋 Detalle gastos</div>
+        <div class="tab" onclick="tabFinanzas('retiro',this)">💰 Política de Retiro</div>
     </div>
     <div class="card" style="margin-bottom:16px;">
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
@@ -1244,14 +1245,231 @@ function vFinanzas() {
             <div><label>Hasta</label><input type="date" id="finHasta" value="${hoyStr}" onchange="initFinanzas()" style="width:160px;margin:0"></div>
         </div>
     </div>
-    <div id="finanzasContent"></div>`;
+    <div id="finanzasContent"></div>
+    <div id="retiroContent"></div>`;
 }
 
 function tabFinanzas(tab, el) {
     document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
     el.classList.add('active');
     window._finTab = tab;
-    initFinanzas();
+    if (tab === 'retiro') renderPoliticaRetiro();
+    else initFinanzas();
+}
+
+function renderPoliticaRetiro() {
+    const div = document.getElementById('retiroContent');
+    const divFin = document.getElementById('finanzasContent');
+    if (divFin) divFin.innerHTML = '';
+    if (!div) return;
+
+    const LOTE_MENSUAL = 330;
+    const COSTO_BB = 7.50;
+    const COSTO_ALIM_KG = 1.98;
+    const OPEX_MENSUAL = 1500;
+    const DIAS_PROYECCION = 60;
+    const COLCHON_SEGURIDAD = 1000;
+
+    // Caja actual = ventas cobradas - gastos reales pagados
+    const totalVentas = DB.ventas
+        .filter(v => v.tipo !== 'credito' || v.pagado)  // solo cobradas
+        .reduce((s,v) => s + (parseFloat(v.total)||0), 0);
+    const totalGastos = DB.gastos.reduce((s,g) => s + (parseFloat(g.monto)||0), 0);
+    const cajaActual = totalVentas - totalGastos;
+
+    // Lo que me deben clientes (ventas a crédito no cobradas)
+    const porCobrar = DB.ventas
+        .filter(v => v.tipo === 'credito' && !v.pagado)
+        .reduce((s,v) => s + (parseFloat(v.total)||0), 0);
+
+    // Mis deudas pendientes (lo que debo pagar, excluyendo lotes futuros programados)
+    const deudasPendientes = (DB.deudas||[])
+        .filter(d => d.estado !== 'pagado' && !d.esProgramado)
+        .reduce((s,d) => s + (parseFloat(d.monto)||0), 0);
+
+    // Lotes futuros programados (reservar esa plata)
+    const reservaLotesFuturos = (DB.deudas||[])
+        .filter(d => d.estado !== 'pagado' && d.esProgramado)
+        .reduce((s,d) => s + (parseFloat(d.monto)||0), 0);
+
+    // Proyectar costos próximos 60 días
+    const hoyDate = new Date(hoy() + 'T00:00:00');
+    const en60 = new Date(hoyDate.getTime() + DIAS_PROYECCION * 86400000);
+
+    // BB lotes futuros que entran en los próximos 60 días
+    const lotesFut = lotesFuturos();
+    let bbProximos = 0;
+    let lotesEntrantes = [];
+    lotesFut.forEach(l => {
+        const fl = new Date(l.fechaLlegada + 'T00:00:00');
+        if (fl <= en60) {
+            bbProximos += (l.cantidad || LOTE_MENSUAL) * COSTO_BB;
+            lotesEntrantes.push({ id: l.id, fecha: l.fechaLlegada, cantidad: l.cantidad, costo: (l.cantidad||LOTE_MENSUAL)*COSTO_BB });
+        }
+    });
+
+    // Si no hay lotes futuros registrados, asumir 1 lote mensual
+    if (lotesFut.length === 0) {
+        bbProximos = LOTE_MENSUAL * COSTO_BB;
+        lotesEntrantes.push({ id: 'Próximo lote', fecha: '(sin fecha)', cantidad: LOTE_MENSUAL, costo: LOTE_MENSUAL * COSTO_BB });
+    }
+
+    // Alimento proyectado 60 días — todos los lotes activos y futuros
+    let alimentoProyectado = 0;
+    const recetas = getRecetas();
+    const todosLotes = [...lotesActivos(), ...lotesFuturos()];
+    todosLotes.forEach(l => {
+        const sems = calcProyeccionLote(l);
+        sems.forEach(s => {
+            if (s.estado === 'pasada') return;
+            const fechaIniS = new Date(s.fechaIni + 'T00:00:00');
+            const fechaFinS = new Date(s.fechaFin + 'T00:00:00');
+            const solapIni = fechaIniS > hoyDate ? fechaIniS : hoyDate;
+            const solapFin = fechaFinS < en60 ? fechaFinS : en60;
+            if (solapIni > solapFin) return;
+            const dias = Math.floor((solapFin - solapIni) / 86400000) + 1;
+            alimentoProyectado += s.kgDia * dias * COSTO_ALIM_KG;
+        });
+    });
+
+    // Personal 2 meses
+    const personalProx = OPEX_MENSUAL * 2;
+
+    // Total a reservar
+    const totalReservar = bbProximos + alimentoProyectado + personalProx + COLCHON_SEGURIDAD + deudasPendientes + reservaLotesFuturos;
+    const disponibleRetiro = Math.max(0, cajaActual - totalReservar);
+
+    // Retiro sugerido (80% del disponible, conservador)
+    const retiroSugerido = Math.floor(disponibleRetiro * 0.8 / 100) * 100;
+
+    // Semáforo
+    const semaforo = disponibleRetiro > 3000 ? 'verde' : disponibleRetiro > 0 ? 'amarillo' : 'rojo';
+    const colorSem = semaforo === 'verde' ? '#27ae60' : semaforo === 'amarillo' ? '#e67e22' : '#e74c3c';
+    const bgSem = semaforo === 'verde' ? '#f0fff4' : semaforo === 'amarillo' ? '#fffaf0' : '#fff5f5';
+    const iconSem = semaforo === 'verde' ? '✅' : semaforo === 'amarillo' ? '⚠️' : '🔴';
+    const msgSem = semaforo === 'verde' ? 'Puedes retirar sin afectar la operación' :
+                   semaforo === 'amarillo' ? 'Retiro posible pero con margen ajustado' :
+                   'No es momento de retirar — caja insuficiente para cubrir costos próximos';
+
+    div.innerHTML = `
+    <div style="border:2px solid ${colorSem};border-radius:12px;overflow:hidden;margin-bottom:16px">
+        <div style="background:${bgSem};padding:16px 20px;display:flex;align-items:center;gap:16px">
+            <div style="font-size:40px">${iconSem}</div>
+            <div>
+                <div style="font-size:18px;font-weight:700;color:${colorSem}">${msgSem}</div>
+                <div style="font-size:13px;color:#718096;margin-top:4px">Proyección a 60 días · considera lotes activos y futuros</div>
+            </div>
+        </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div class="card" style="border-left:4px solid #3498db">
+            <div style="font-size:12px;color:#718096">Caja actual (ventas − gastos)</div>
+            <div style="font-size:28px;font-weight:700;color:${cajaActual>=0?'#27ae60':'#e74c3c'};margin:6px 0">
+                S/ ${cajaActual.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}
+            </div>
+            <div style="font-size:11px;color:#718096">Ingresos reales menos gastos registrados</div>
+        </div>
+        <div class="card" style="border-left:4px solid ${colorSem}">
+            <div style="font-size:12px;color:#718096">💰 Retiro sugerido</div>
+            <div style="font-size:28px;font-weight:700;color:${colorSem};margin:6px 0">
+                S/ ${retiroSugerido.toLocaleString('es-PE')}
+            </div>
+            <div style="font-size:11px;color:#718096">80% del disponible después de reservas</div>
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+        <div class="card-header">🔒 Capital de trabajo a reservar (próximos 60 días)</div>
+        
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #e2e8f0;font-size:13px">
+            <div>
+                <span>🐥 BB lotes entrantes</span>
+                <div style="font-size:11px;color:#718096;margin-top:2px">
+                    ${lotesEntrantes.map(l => `${l.id} (${l.cantidad} patos) el ${l.fecha}`).join(' · ')}
+                </div>
+            </div>
+            <span style="font-weight:700;color:#e74c3c">S/ ${bbProximos.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}</span>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #e2e8f0;font-size:13px">
+            <div>
+                <span>🌾 Alimento proyectado (60 días)</span>
+                <div style="font-size:11px;color:#718096;margin-top:2px">Todos los lotes activos y futuros × curva real</div>
+            </div>
+            <span style="font-weight:700;color:#e74c3c">S/ ${alimentoProyectado.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}</span>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #e2e8f0;font-size:13px">
+            <div>
+                <span>👤 Personal (2 meses)</span>
+                <div style="font-size:11px;color:#718096;margin-top:2px">S/ 1,500 × 2</div>
+            </div>
+            <span style="font-weight:700;color:#e74c3c">S/ ${personalProx.toLocaleString('es-PE')}</span>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #e2e8f0;font-size:13px">
+            <div>
+                <span>🛡️ Colchón de seguridad</span>
+                <div style="font-size:11px;color:#718096;margin-top:2px">Imprevistos y emergencias</div>
+            </div>
+            <span style="font-weight:700;color:#e74c3c">S/ ${COLCHON_SEGURIDAD.toLocaleString('es-PE')}</span>
+        </div>
+        ${deudasPendientes > 0 ? `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #e2e8f0;font-size:13px;background:#fff5f5">
+            <div>
+                <span>💳 Deudas pendientes a pagar</span>
+                <div style="font-size:11px;color:#718096;margin-top:2px">Lo que debes — afecta tu caja disponible</div>
+            </div>
+            <span style="font-weight:700;color:#e74c3c">S/ \${deudasPendientes.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}</span>
+        </div>` : ''}
+        ${reservaLotesFuturos > 0 ? `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #e2e8f0;font-size:13px;background:#fffaf0">
+            <div>
+                <span>🐥 Lotes futuros programados</span>
+                <div style="font-size:11px;color:#718096;margin-top:2px">Pago pendiente al momento de llegada</div>
+            </div>
+            <span style="font-weight:700;color:#e67e22">S/ \${reservaLotesFuturos.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}</span>
+        </div>` : ''}
+        ${porCobrar > 0 ? `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #e2e8f0;font-size:13px;background:#f0fff4">
+            <div>
+                <span>⏳ Por cobrar de clientes</span>
+                <div style="font-size:11px;color:#718096;margin-top:2px">Vendido pero aún no cobrado — no disponible aún</div>
+            </div>
+            <span style="font-weight:700;color:#27ae60">+S/ \${porCobrar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}</span>
+        </div>` : ''}
+
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;font-size:14px;font-weight:700">
+            <span>Total a reservar</span>
+            <span style="color:#e74c3c">S/ ${totalReservar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}</span>
+        </div>
+
+        <div style="background:#f7fafc;border-radius:8px;padding:12px;margin-top:4px">
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
+                <span style="color:#718096">Caja actual</span>
+                <span>S/ ${cajaActual.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
+                <span style="color:#718096">− Total a reservar</span>
+                <span style="color:#e74c3c">S/ ${totalReservar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}</span>
+            </div>
+            <div style="border-top:1px solid #e2e8f0;padding-top:8px;display:flex;justify-content:space-between;font-size:15px;font-weight:700">
+                <span>Disponible para retiro</span>
+                <span style="color:${colorSem}">S/ ${disponibleRetiro.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="card" style="background:#1a202c;color:white">
+        <div style="font-size:13px;color:#a0aec0;margin-bottom:10px">📌 Recuerda siempre</div>
+        <div style="font-size:13px;color:#e2e8f0;line-height:1.8">
+            → Entra <b style="color:#68d391">1 lote de ~330 patos</b> cada mes<br>
+            → Reserva siempre <b style="color:#68d391">S/ ${(LOTE_MENSUAL*COSTO_BB).toLocaleString('es-PE')}</b> para el próximo lote BB<br>
+            → Retira <b>después</b> de que el cobro de ventas esté en caja<br>
+            → Nunca retires si la caja queda por debajo de <b style="color:#fbd38d">S/ ${(LOTE_MENSUAL*COSTO_BB + OPEX_MENSUAL*2).toLocaleString('es-PE')}</b>
+        </div>
+    </div>`;
 }
 
 function initFinanzas() {
@@ -1498,21 +1716,57 @@ async function regLote() {
     const fecha = document.getElementById('loteFecha')?.value;
     if (!id||!cant||!fecha) return mostrarMensaje('Completa todos los campos', 'error');
     if (DB.lotes.find(l=>l.id===id)) return mostrarMensaje('Ya existe ese lote', 'error');
-    mostrarModal('Registrar Lote', `<b>${id}</b><br>${esp}: ${cant} animales<br>Fecha: ${fecha}<br>Costo: S/ ${costo}`, async () => {
+
+    const hoyStr = hoy();
+    const esFuturo = fecha > hoyStr;
+
+    const resumen = esFuturo
+        ? `<b>${id}</b> — ${esp}: ${cant} animales<br>📅 Llegada: ${fecha}<br>💰 Costo: S/ ${costo}<br><br><span style="color:#e67e22;font-size:12px">⏳ Lote futuro — el gasto se registrará automáticamente el día de llegada (${fecha})</span>`
+        : `<b>${id}</b> — ${esp}: ${cant} animales<br>📅 Llegada: ${fecha}<br>💰 Costo: S/ ${costo}`;
+
+    mostrarModal('Registrar Lote', resumen, async () => {
         const lote = {id, especie:esp, cantidad:cant, fechaLlegada:fecha, loteOrigen:'', sexo:''};
         DB.lotes.push(lote);
-        if (costo > 0) {
-            DB.gastos.unshift({id:'G_'+Date.now(), fecha, concepto:`🐾 Compra: ${esp} (${id})`, monto:costo});
+
+        // Solo registrar gasto si el lote ya llegó (fecha <= hoy)
+        if (costo > 0 && !esFuturo) {
+            const g = {id:'G_'+Date.now(), fecha, concepto:`Compra: ${esp} (${id})`, monto:costo};
+            DB.gastos.unshift(g);
+            await enviarAlSheet('guardarGasto', g);
         }
+        // Si es futuro y tiene costo, crear como deuda pendiente
+        if (costo > 0 && esFuturo) {
+            if (!DB.deudas) DB.deudas = [];
+            const deuda = {
+                id: 'D_'+Date.now(),
+                concepto: `Compra: ${esp} (${id}) — ${cant} animales`,
+                proveedor: 'Proveedor de patos',
+                monto: costo,
+                fecha: hoyStr,
+                vencimiento: fecha,
+                notas: `Lote programado para ${fecha}. Gasto se registrará al llegar.`,
+                estado: 'pendiente',
+                loteId: id,
+                esProgramado: true
+            };
+            DB.deudas.unshift(deuda);
+            guardarLocal();
+            await enviarAlSheet('guardarDeuda', deuda);
+        }
+
         guardarLocal();
-        const res = await enviarAlSheet('guardarLote', {...lote, costo});
-        if (!res.success) PENDIENTES.push({accion:'guardarLote', datos:{...lote, costo}});
-        mostrarMensaje(res.success ? '✅ Lote registrado' : '⚠️ Guardado local. Sincroniza.', res.success?'ok':'info');
+        const res = await enviarAlSheet('guardarLote', {...lote, costo: esFuturo ? 0 : costo});
+        if (!res.success) PENDIENTES.push({accion:'guardarLote', datos:{...lote, costo: esFuturo ? 0 : costo}});
+        mostrarMensaje(
+            esFuturo
+                ? `✅ Lote ${id} programado para ${fecha} — gasto se registrará al llegar`
+                : res.success ? '✅ Lote registrado' : '⚠️ Guardado local. Sincroniza.',
+            'ok'
+        );
         renderizar(vistaActual);
     });
 }
 
-// ============ FIX: anularLoteUI completo ============
 async function anularLoteUI(id) {
     mostrarModal('Anular Lote', '¿Anular este lote? Esta acción no se puede deshacer.', async () => {
         DB.lotes = DB.lotes.filter(l => l.id !== id);
